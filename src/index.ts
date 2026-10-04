@@ -27,14 +27,13 @@ type Block =
   | { t: "li"; text: string }
   | { t: "code"; lang: string; code: string };
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
 const TG_LIMIT = 3800;
 
 // ───────────────────────── Frontmatter + Markdown ─────────────────────────
 
 function clean(v: string): string {
   let s = v.trim().replace(/^["']|["']$/g, "");
-  const link = s.match(/^\[[^\]]*\]\((https?:\/\/[^)\s]+)\)$/); // "[url](url)" → url
+  const link = s.match(/^\[[^\]]*\]\((https?:\/\/[^)\s]+)\)$/);
   if (link) s = link[1];
   return s;
 }
@@ -105,25 +104,31 @@ function parseBlocks(body: string): Block[] {
   return out;
 }
 
-// ───────────────────────── Загрузка базы знаний (GitHub) ─────────────────────────
-
-let cache: { at: number; items: Article[] } | null = null;
+// ───────────────────────── Загрузка базы знаний из GitHub ─────────────────────────
 
 async function loadArticles(env: Env): Promise<Article[]> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.items;
+  // Пробуем взять из Cloudflare KV, если он подтянутый
+  if (env.KB_KV) {
+    const cached = await env.KB_KV.get("kb_articles_cache", "json");
+    if (cached) return cached as Article[];
+  }
+
   const headers: Record<string, string> = {
     "User-Agent": "Research-Centre-Worker",
     Accept: "application/vnd.github.v3+json",
   };
+  
   if (env.GITHUB_TOKEN) {
-    headers.Authorization = env.GITHUB_TOKEN.startsWith("ghp_") || env.GITHUB_TOKEN.startsWith("github_pat_")
-      ? `token ${env.GITHUB_TOKEN}`
-      : `Bearer ${env.GITHUB_TOKEN}`;
+    const tok = env.GITHUB_TOKEN.trim();
+    headers.Authorization = tok.startsWith("github_pat_") || tok.startsWith("ghp_")
+      ? `token ${tok}`
+      : `Bearer ${tok}`;
   }
 
   const listUrl = `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${env.KB_PATH}?ref=${env.GITHUB_BRANCH}`;
   const res = await fetch(listUrl, { headers });
   if (!res.ok) throw new Error(`GitHub API ${res.status}: ${(await res.text()).slice(0, 160)}`);
+  
   const files = (await res.json()) as { name: string; type: string; download_url: string | null }[];
 
   const items = await Promise.all(
@@ -132,14 +137,15 @@ async function loadArticles(env: Env): Promise<Article[]> {
       .map(async (f): Promise<Article> => {
         const r = await fetch(f.download_url!, { headers });
         if (!r.ok) throw new Error(`GitHub raw ${r.status}: ${f.name}`);
-        const { meta, body } = parseFrontmatter(await r.text());
+        const rawText = await r.text();
+        const { meta, body } = parseFrontmatter(rawText);
         const h1 = body.match(/^#\s+(.+)$/m);
         const id = String(meta.id || f.name.replace(/\.md$/, ""));
         return {
           id,
           title: String(meta.title || h1?.[1] || id),
           category: String(meta.category || "general"),
-          tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [],
+          tags: Array.isArray(meta.tags) ? meta.tags.map((t) => String(t).toLowerCase()) : [],
           sources: (Array.isArray(meta.sources) ? meta.sources : [])
             .filter((s: any) => s && s.url)
             .map((s: any) => ({ title: String(s.title || s.url), url: String(s.url) })),
@@ -147,43 +153,51 @@ async function loadArticles(env: Env): Promise<Article[]> {
         };
       })
   );
+
   items.sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title));
-  cache = { at: Date.now(), items };
+
+  if (env.KB_KV) {
+    await env.KB_KV.put("kb_articles_cache", JSON.stringify(items), { expirationTtl: 300 }); // TTL 5 минут
+  }
+
   return items;
 }
 
-// ───────────────────────── Поиск ─────────────────────────
+// ───────────────────────── Улучшенный поиск ─────────────────────────
 
 const tokenize = (q: string) =>
   q.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(Boolean);
 
-const hit = (hay: string, t: string) => hay.includes(t) || (t.length > 5 && hay.includes(t.slice(0, -2)));
-
-function score(a: Article, terms: string[]): number {
+function score(a: Article, terms: string[], fullQuery: string): number {
   const title = a.title.toLowerCase();
   const body = a.body.toLowerCase();
-  const tags = a.tags.map((t) => t.toLowerCase());
+  const tags = a.tags;
+  const id = a.id.toLowerCase();
   let s = 0;
+
+  if (id === fullQuery) s += 20;
+  if (title.includes(fullQuery)) s += 15;
+
   for (const t of terms) {
-    if (a.id.toLowerCase().includes(t)) s += 6;
-    if (hit(title, t)) s += 5;
-    if (tags.includes(t)) s += 8;
-    else if (tags.some((g) => g.includes(t))) s += 4;
-    if (a.category.toLowerCase() === t) s += 3;
-    if (hit(body, t)) s += 1;
+    if (id.includes(t)) s += 10;
+    if (title.includes(t)) s += 8;
+    if (tags.some((tag) => tag.includes(t))) s += 12;
+    if (a.category.toLowerCase().includes(t)) s += 5;
+    if (body.includes(t)) s += 2;
   }
   return s;
 }
 
 function search(items: Article[], q: string): Article[] {
-  const exact = items.find((a) => a.id.toLowerCase() === q.trim().toLowerCase());
-  const terms = tokenize(q);
-  const ranked = items
-    .map((a) => ({ a, s: score(a, terms) }))
+  const cleanQ = q.trim().toLowerCase();
+  const terms = tokenize(cleanQ);
+  if (!terms.length) return [];
+
+  return items
+    .map((a) => ({ a, s: score(a, terms, cleanQ) }))
     .filter((x) => x.s > 0)
     .sort((x, y) => y.s - x.s)
     .map((x) => x.a);
-  return exact ? [exact, ...ranked.filter((a) => a.id !== exact.id)] : ranked;
 }
 
 function similar(items: Article[], base: Article): Article[] {
@@ -199,7 +213,7 @@ function similar(items: Article[], base: Article): Article[] {
     .map((x) => x.a);
 }
 
-// ───────────────────────── CLI: ANSI-вывод ─────────────────────────
+// ───────────────────────── CLI Output ─────────────────────────
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", underline: "\x1b[4m",
@@ -243,9 +257,6 @@ function highlightLine(line: string, lang: string, p: Painter): string {
       )
     );
   }
-  if (/^\s*\[.+\]\s*$/.test(line)) return p(C.bold + C.magenta, line);
-  const kv = line.match(/^(\s*-?\s*)([A-Za-z_][\w.-]*)(\s*[:=])(.*)$/);
-  if (kv) return kv[1] + p(C.cyan, kv[2]) + kv[3] + strs(kv[4]);
   return strs(line);
 }
 
@@ -355,9 +366,7 @@ async function tg(env: Env, method: string, payload: Record<string, unknown>): P
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const data: any = await res.json().catch(() => ({}));
-  if (!data.ok) console.error("Telegram error", method, JSON.stringify(data));
-  return data;
+  return res.json().catch(() => ({}));
 }
 
 const send = (env: Env, chatId: number, text: string, reply_markup?: unknown) =>
@@ -435,14 +444,14 @@ function actionBar(a: Article, isFav: boolean): Kb {
 const favKey = (uid: number) => `fav:${uid}`;
 
 async function kvGet(env: Env, key: string): Promise<string | null> {
-  try { return env.KB_KV ? await env.KB_KV.get(key) : null; } catch (e) { console.error("kv get", e); return null; }
+  try { return env.KB_KV ? await env.KB_KV.get(key) : null; } catch { return null; }
 }
 async function kvPut(env: Env, key: string, value: string, ttl?: number): Promise<boolean> {
   try {
     if (!env.KB_KV) return false;
     await env.KB_KV.put(key, value, ttl ? { expirationTtl: ttl } : undefined);
     return true;
-  } catch (e) { console.error("kv put", e); return false; }
+  } catch { return false; }
 }
 async function getFavs(env: Env, uid: number): Promise<string[]> {
   try { return JSON.parse((await kvGet(env, favKey(uid))) || "[]"); } catch { return []; }
@@ -602,7 +611,7 @@ async function handleUpdate(u: any, env: Env, origin: string) {
   }
 }
 
-// ───────────────────────── Роутинг ─────────────────────────
+// ───────────────────────── Routing ─────────────────────────
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
