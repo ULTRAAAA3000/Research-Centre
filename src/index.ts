@@ -5,6 +5,7 @@ export interface Env {
   KB_KV: KVNamespace;
   TELEGRAM_BOT_TOKEN: string;
   WEBHOOK_SECRET?: string;
+  ALLOWED_USERS?: string;
   GITHUB_TOKEN?: string;
   GITHUB_REPO: string;
   GITHUB_BRANCH: string;
@@ -151,6 +152,9 @@ async function loadArticles(env: Env): Promise<Article[]> {
 const tokenize = (q: string) =>
   q.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(Boolean);
 
+// Подстрочное совпадение + грубое «отрезание» окончания для длинных слов (русская морфология)
+const hit = (hay: string, t: string) => hay.includes(t) || (t.length > 5 && hay.includes(t.slice(0, -2)));
+
 function score(a: Article, terms: string[]): number {
   const title = a.title.toLowerCase();
   const body = a.body.toLowerCase();
@@ -158,11 +162,11 @@ function score(a: Article, terms: string[]): number {
   let s = 0;
   for (const t of terms) {
     if (a.id.toLowerCase().includes(t)) s += 6;
-    if (title.includes(t)) s += 5;
+    if (hit(title, t)) s += 5;
     if (tags.includes(t)) s += 8;
     else if (tags.some((g) => g.includes(t))) s += 4;
     if (a.category.toLowerCase() === t) s += 3;
-    if (body.includes(t)) s += 1;
+    if (hit(body, t)) s += 1;
   }
   return s;
 }
@@ -243,16 +247,22 @@ function highlightLine(line: string, lang: string, p: Painter): string {
 
 function codeFrame(lang: string, code: string, p: Painter): string[] {
   const label = lang || "text";
-  const out = [p(C.gray, `┌─ ${label} ${"─".repeat(Math.max(4, 40 - label.length))}`)];
-  for (const line of code.split("\n")) out.push(`${p(C.gray, "│")} ${highlightLine(line, lang, p)}`);
-  out.push(p(C.gray, `└${"─".repeat(44)}`));
+  const lines = code.replace(/\t/g, "  ").split("\n");
+  const len = (l: string) => [...l].length;
+  const width = Math.max(label.length + 4, 24, ...lines.map(len));
+  const inner = width + 2;
+  const out = [p(C.gray, `┌─ ${label} ${"─".repeat(inner - label.length - 3)}┐`)];
+  for (const line of lines) {
+    out.push(`${p(C.gray, "│")} ${highlightLine(line, lang, p)}${" ".repeat(width - len(line))} ${p(C.gray, "│")}`);
+  }
+  out.push(p(C.gray, `└${"─".repeat(inner)}┘`));
   return out;
 }
 
 function renderArticleAnsi(a: Article, color: boolean): string {
   const p = painter(color);
   const out: string[] = [];
-  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "|")} ${p(C.green, a.category)}`);
+  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "|")} ${p(C.green, a.category)}`);
   out.push(p(C.gray, "═".repeat(60)));
   out.push(`📌 ${p(C.bold + C.yellow, a.title)}`);
   if (a.tags.length) out.push(p(C.gray, a.tags.map((t) => "#" + t).join(" ")));
@@ -587,7 +597,10 @@ export default {
       if (env.WEBHOOK_SECRET && req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
         return new Response("Forbidden", { status: 403 });
       }
-      const update = await req.json();
+      const update: any = await req.json();
+      const allowed = (env.ALLOWED_USERS || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const from = update?.message?.from?.id ?? update?.callback_query?.from?.id;
+      if (allowed.length && !allowed.includes(String(from))) return new Response("ok");
       ctx.waitUntil(handleUpdate(update, env, url.origin).catch((e) => console.error("update failed", e)));
       return new Response("ok");
     }

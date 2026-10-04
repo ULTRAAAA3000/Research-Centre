@@ -8,12 +8,16 @@ GITHUB_BRANCH = "main"
 KB_PATH = "kb"
 
 # Хранилище избранного и последнего поискового запроса.
-# Создать: npx wrangler kv namespace create KB_KV  → вставить выданный id ниже.
+# id не указан: wrangler (>= 4.45) создаст KV-namespace автоматически при `wrangler deploy`.
+# Если автосоздание недоступно: npx wrangler kv namespace create KB_KV и добавьте строку id = "..." ниже.
 [[kv_namespaces]]
 binding = "KB_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[observability]
+enabled = true
 
 # Секреты (задаются командой `npx wrangler secret put <NAME>`):
 #   TELEGRAM_BOT_TOKEN  — токен от @BotFather
 #   WEBHOOK_SECRET      — произвольная строка, проверяется в заголовке вебхука
 #   GITHUB_TOKEN        — (опционально) токен для приватного репо / лимитов API
+#   ALLOWED_USERS       — (опционально) Telegram user id через запятую; остальным бот не отвечает
