@@ -68,7 +68,7 @@ function parseFrontmatter(raw: string): { meta: Record<string, any>; body: strin
       }
       meta[key] = items;
     } else if (val.startsWith("[")) {
-      meta[key] = val.replace(/^\[|\]$/g, "").split(",").map(clean).filter(Boolean);
+      meta[key] = val.replace(/^\[\vert{}\]$/g, "").split(",").map(clean).filter(Boolean);
     } else {
       meta[key] = clean(val);
     }
@@ -112,10 +112,14 @@ let cache: { at: number; items: Article[] } | null = null;
 async function loadArticles(env: Env): Promise<Article[]> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.items;
   const headers: Record<string, string> = {
-    "User-Agent": "research-centre-worker",
-    Accept: "application/vnd.github+json",
+    "User-Agent": "Research-Centre-Worker",
+    Accept: "application/vnd.github.v3+json",
   };
-  if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  if (env.GITHUB_TOKEN) {
+    headers.Authorization = env.GITHUB_TOKEN.startsWith("ghp_") || env.GITHUB_TOKEN.startsWith("github_pat_")
+      ? `token ${env.GITHUB_TOKEN}`
+      : `Bearer ${env.GITHUB_TOKEN}`;
+  }
 
   const listUrl = `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${env.KB_PATH}?ref=${env.GITHUB_BRANCH}`;
   const res = await fetch(listUrl, { headers });
@@ -153,7 +157,6 @@ async function loadArticles(env: Env): Promise<Article[]> {
 const tokenize = (q: string) =>
   q.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(Boolean);
 
-// Подстрочное совпадение + грубое «отрезание» окончания для длинных слов (русская морфология)
 const hit = (hay: string, t: string) => hay.includes(t) || (t.length > 5 && hay.includes(t.slice(0, -2)));
 
 function score(a: Article, terms: string[]): number {
@@ -252,7 +255,7 @@ function codeFrame(lang: string, code: string, p: Painter): string[] {
   const len = (l: string) => [...l].length;
   const width = Math.max(label.length + 4, 24, ...lines.map(len));
   const inner = width + 2;
-  const out = [p(C.gray, `┌─ ${label} ${"─".repeat(inner - label.length - 3)}┐`)];
+  const out = [p(C.gray, `┌─ ${label}${"─".repeat(inner - label.length - 3)}┐`)];
   for (const line of lines) {
     out.push(`${p(C.gray, "│")} ${highlightLine(line, lang, p)}${" ".repeat(width - len(line))} ${p(C.gray, "│")}`);
   }
@@ -263,7 +266,7 @@ function codeFrame(lang: string, code: string, p: Painter): string[] {
 function renderArticleAnsi(a: Article, color: boolean): string {
   const p = painter(color);
   const out: string[] = [];
-  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "|")} ${p(C.green, a.category)}`);
+  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "\vert{}")} ${p(C.green, a.category)}`);
   out.push(p(C.gray, "═".repeat(60)));
   out.push(`📌 ${p(C.bold + C.yellow, a.title)}`);
   if (a.tags.length) out.push(p(C.gray, a.tags.map((t) => "#" + t).join(" ")));
@@ -302,7 +305,7 @@ function renderIndexAnsi(items: Article[], color: boolean, note = ""): string {
   let cat = "";
   for (const a of items) {
     if (a.category !== cat) { cat = a.category; out.push(p(C.bold + C.magenta, `▌ ${cat}`)); }
-    out.push(`  ${p(C.cyan, a.id)} — ${a.title}`);
+    out.push(`  ${p(C.cyan, a.id)} —${a.title}`);
   }
   out.push("", p(C.gray, "Использование: kb <запрос>  |  kb <id>  |  kb list"));
   return out.join("\n");
@@ -431,7 +434,6 @@ function actionBar(a: Article, isFav: boolean): Kb {
 
 const favKey = (uid: number) => `fav:${uid}`;
 
-// KV необязателен: без него бот работает, но без избранного и кнопки «Назад к поиску»
 async function kvGet(env: Env, key: string): Promise<string | null> {
   try { return env.KB_KV ? await env.KB_KV.get(key) : null; } catch (e) { console.error("kv get", e); return null; }
 }
