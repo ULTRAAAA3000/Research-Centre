@@ -2,7 +2,7 @@
 // Роуты: POST /telegram-webhook (Telegram), GET /cli?q=<query> (терминал, ANSI)
 
 export interface Env {
-  KB_KV: KVNamespace;
+  KB_KV?: KVNamespace;
   TELEGRAM_BOT_TOKEN: string;
   WEBHOOK_SECRET?: string;
   ALLOWED_USERS?: string;
@@ -119,7 +119,7 @@ async function loadArticles(env: Env): Promise<Article[]> {
 
   const listUrl = `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${env.KB_PATH}?ref=${env.GITHUB_BRANCH}`;
   const res = await fetch(listUrl, { headers });
-  if (!res.ok) throw new Error(`GitHub list failed: ${res.status}`);
+  if (!res.ok) throw new Error(`GitHub API ${res.status}: ${(await res.text()).slice(0, 160)}`);
   const files = (await res.json()) as { name: string; type: string; download_url: string | null }[];
 
   const items = await Promise.all(
@@ -127,6 +127,7 @@ async function loadArticles(env: Env): Promise<Article[]> {
       .filter((f) => f.type === "file" && f.name.endsWith(".md") && f.download_url)
       .map(async (f): Promise<Article> => {
         const r = await fetch(f.download_url!, { headers });
+        if (!r.ok) throw new Error(`GitHub raw ${r.status}: ${f.name}`);
         const { meta, body } = parseFrontmatter(await r.text());
         const h1 = body.match(/^#\s+(.+)$/m);
         const id = String(meta.id || f.name.replace(/\.md$/, ""));
@@ -429,8 +430,20 @@ function actionBar(a: Article, isFav: boolean): Kb {
 }
 
 const favKey = (uid: number) => `fav:${uid}`;
+
+// KV необязателен: без него бот работает, но без избранного и кнопки «Назад к поиску»
+async function kvGet(env: Env, key: string): Promise<string | null> {
+  try { return env.KB_KV ? await env.KB_KV.get(key) : null; } catch (e) { console.error("kv get", e); return null; }
+}
+async function kvPut(env: Env, key: string, value: string, ttl?: number): Promise<boolean> {
+  try {
+    if (!env.KB_KV) return false;
+    await env.KB_KV.put(key, value, ttl ? { expirationTtl: ttl } : undefined);
+    return true;
+  } catch (e) { console.error("kv put", e); return false; }
+}
 async function getFavs(env: Env, uid: number): Promise<string[]> {
-  return ((await env.KB_KV.get(favKey(uid), "json")) as string[] | null) || [];
+  try { return JSON.parse((await kvGet(env, favKey(uid))) || "[]"); } catch { return []; }
 }
 
 async function showArticle(env: Env, chatId: number, uid: number, a: Article) {
@@ -451,7 +464,7 @@ function listKb(list: Article[]): Kb {
 async function doSearch(env: Env, chatId: number, q: string) {
   const items = await loadArticles(env);
   const found = search(items, q).slice(0, 8);
-  await env.KB_KV.put(`last:${chatId}`, q, { expirationTtl: 86400 });
+  await kvPut(env, `last:${chatId}`, q, 86400);
   if (!found.length) {
     await send(env, chatId, `${BRAND}\n\nПо запросу «${esc(q)}» ничего не найдено.\nПопробуйте другое слово или откройте список статей.`, { inline_keyboard: menuKb() });
     return;
@@ -518,9 +531,9 @@ async function handleCallback(cb: any, env: Env, origin: string) {
     const favs = await getFavs(env, uid);
     const has = favs.includes(id);
     const next = has ? favs.filter((x) => x !== id) : [...favs, id];
-    await env.KB_KV.put(favKey(uid), JSON.stringify(next));
-    toast = has ? "Удалено из избранного" : "Добавлено в избранное";
-    const a = (await loadArticles(env)).find((x) => x.id === id);
+    const saved = await kvPut(env, favKey(uid), JSON.stringify(next));
+    toast = !saved ? "Избранное недоступно: к Worker не подключён KV" : has ? "Удалено из избранного" : "Добавлено в избранное";
+    const a = saved ? (await loadArticles(env)).find((x) => x.id === id) : undefined;
     if (a) await tg(env, "editMessageReplyMarkup", { chat_id: chatId, message_id: cb.message.message_id, reply_markup: { inline_keyboard: actionBar(a, !has) } });
   }
   await tg(env, "answerCallbackQuery", { callback_query_id: cb.id, text: toast });
@@ -550,7 +563,7 @@ async function handleCallback(cb: any, env: Env, origin: string) {
       break;
     }
     case "b": {
-      const last = await env.KB_KV.get(`last:${chatId}`);
+      const last = await kvGet(env, `last:${chatId}`);
       if (last) await doSearch(env, chatId, last);
       else await sendWelcome(env, chatId);
       break;
@@ -601,7 +614,16 @@ export default {
       const allowed = (env.ALLOWED_USERS || "").split(",").map((x) => x.trim()).filter(Boolean);
       const from = update?.message?.from?.id ?? update?.callback_query?.from?.id;
       if (allowed.length && !allowed.includes(String(from))) return new Response("ok");
-      ctx.waitUntil(handleUpdate(update, env, url.origin).catch((e) => console.error("update failed", e)));
+      ctx.waitUntil(
+        handleUpdate(update, env, url.origin).catch(async (e) => {
+          console.error("update failed", e);
+          const chatId = update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id;
+          if (chatId) {
+            const msg = esc(String((e as Error)?.message || e)).slice(0, 500);
+            await send(env, chatId, `⚠️ <b>Ошибка</b>\n<code>${msg}</code>`).catch(() => {});
+          }
+        })
+      );
       return new Response("ok");
     }
     if (url.pathname === "/") return new Response("🔬 Research Centre API is running\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
