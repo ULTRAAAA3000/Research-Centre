@@ -8,6 +8,14 @@ sources:
     url: "https://docs.docker.com/reference/cli/docker/"
   - title: "Docker Docs"
     url: "https://docs.docker.com/"
+  - title: "Форум: Docker Community Forums"
+    url: "https://forums.docker.com/"
+  - title: "Форум: Stack Overflow — тег docker"
+    url: "https://stackoverflow.com/questions/tagged/docker"
+  - title: "Сообщество: Reddit r/docker"
+    url: "https://www.reddit.com/r/docker/"
+  - title: "Хабр: свежие статьи про Docker"
+    url: "https://habr.com/ru/search/?q=docker&target_type=posts&order=date"
 ---
 
 # Docker: шпаргалка

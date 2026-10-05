@@ -8,6 +8,12 @@ sources:
     url: "https://docs.docker.com/compose/"
   - title: "Compose file reference"
     url: "https://docs.docker.com/reference/compose-file/"
+  - title: "Форум: Stack Overflow — тег docker-compose"
+    url: "https://stackoverflow.com/questions/tagged/docker-compose"
+  - title: "Форум: Docker Community Forums"
+    url: "https://forums.docker.com/"
+  - title: "Хабр: свежие статьи про Docker Compose"
+    url: "https://habr.com/ru/search/?q=docker%20compose&target_type=posts&order=date"
 ---
 
 # Docker Compose

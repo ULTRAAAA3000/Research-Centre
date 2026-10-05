@@ -8,6 +8,14 @@ sources:
     url: "https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html"
   - title: "journalctl(1)"
     url: "https://www.freedesktop.org/software/systemd/man/latest/journalctl.html"
+  - title: "Вики: ArchWiki — systemd"
+    url: "https://wiki.archlinux.org/title/Systemd"
+  - title: "Гайд: DigitalOcean — systemd essentials"
+    url: "https://www.digitalocean.com/community/tutorials/systemd-essentials-working-with-services-units-and-the-journal"
+  - title: "Форум: Unix & Linux SE — тег systemd"
+    url: "https://unix.stackexchange.com/questions/tagged/systemd"
+  - title: "Хабр: свежие статьи про systemd"
+    url: "https://habr.com/ru/search/?q=systemd&target_type=posts&order=date"
 ---
 
 # systemd: сервисы и юниты

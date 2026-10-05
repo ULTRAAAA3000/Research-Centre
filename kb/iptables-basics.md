@@ -8,6 +8,14 @@ sources:
     url: "https://www.netfilter.org/documentation/"
   - title: "man iptables"
     url: "https://man7.org/linux/man-pages/man8/iptables.8.html"
+  - title: "Вики: ArchWiki — iptables"
+    url: "https://wiki.archlinux.org/title/Iptables"
+  - title: "Гайд: DigitalOcean — iptables essentials"
+    url: "https://www.digitalocean.com/community/tutorials/iptables-essentials-common-firewall-rules-and-commands"
+  - title: "Форум: Server Fault — тег iptables"
+    url: "https://serverfault.com/questions/tagged/iptables"
+  - title: "Хабр: свежие статьи про iptables"
+    url: "https://habr.com/ru/search/?q=iptables&target_type=posts&order=date"
 ---
 
 # iptables: базовый файрвол

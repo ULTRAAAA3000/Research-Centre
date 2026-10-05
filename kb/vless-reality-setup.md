@@ -8,6 +8,12 @@ sources:
     url: "https://github.com/XTLS/Xray-core"
   - title: "Документация Project X"
     url: "https://xtls.github.io/"
+  - title: "Репозиторий: XTLS/Xray-examples (готовые конфиги)"
+    url: "https://github.com/XTLS/Xray-examples"
+  - title: "Форум: Xray-core Discussions"
+    url: "https://github.com/XTLS/Xray-core/discussions"
+  - title: "Хабр: свежие статьи про VLESS и Reality"
+    url: "https://habr.com/ru/search/?q=vless%20reality&target_type=posts&order=date"
 ---
 
 # Настройка VLESS Reality
