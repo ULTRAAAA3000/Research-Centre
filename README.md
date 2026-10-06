@@ -83,34 +83,109 @@ curl -s "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
 
 ## 4. Терминал (CLI)
 
-Быстрый запрос без установки:
+### Что это и зачем
+
+Вы вводите в консоли `kb docker`, и статья из базы знаний появляется прямо в терминале: с цветной подсветкой, готовыми командами в рамках и ссылками на первоисточники. Удобно, когда вы сидите на сервере по SSH и не хотите переключаться на браузер или Telegram.
+
+Нужен только `curl` (есть в Linux, macOS и Windows 10/11). Ничего устанавливать не требуется. Команда `kb` это короткий псевдоним: она отправляет запрос на адрес вашего Worker (`/cli?q=...`), тот ищет статью и возвращает готовый текст.
+
+### Шаг 1. Проверка без настройки
 
 ```bash
 curl -s "https://<worker-domain>/cli?q=docker"
 ```
 
-Короткая команда `kb` (добавьте в `~/.bashrc` или `~/.zshrc`, затем `source ~/.bashrc`):
+Если пришла статья, всё работает. Дальше настраиваем короткую команду `kb`, чтобы не набирать длинный адрес. Те же инструкции есть в боте: команда `/cli`.
+
+### Linux и macOS (bash, zsh)
+
+1. Узнайте оболочку: `echo $SHELL`. Для `zsh` (macOS по умолчанию) правьте `~/.zshrc`, для `bash` правьте `~/.bashrc` (в macOS с bash это `~/.bash_profile`).
+2. Добавьте команду одним копированием (для zsh замените `~/.bashrc` на `~/.zshrc`):
 
 ```bash
+cat >> ~/.bashrc <<'EOF'
 alias kb='f() { curl -sG --data-urlencode "q=$*" "https://<worker-domain>/cli"; }; f'
+EOF
 ```
 
-Если алиас с функцией не работает в вашей оболочке, используйте функцию:
+3. Примените без перезапуска терминала: `source ~/.bashrc`
+4. Проверьте: `kb docker`
+
+Что делает строка:
+
+- `alias kb=...` создаёт слово `kb`, которое запускает всё в кавычках;
+- `curl -s` делает запрос без индикатора загрузки;
+- `-G` отправляет данные как параметры адреса (GET);
+- `--data-urlencode "q=$*"` берёт все слова после `kb` и безопасно кодирует их (пробелы, русские буквы), поэтому `kb docker compose` работает.
+
+Удаление: откройте файл (`nano ~/.bashrc`) и удалите строку с `alias kb`.
+
+### Windows (PowerShell)
+
+В PowerShell слово `curl` это псевдоним другой команды (Invoke-WebRequest), поэтому используется `curl.exe`: настоящий curl, встроенный в Windows 10 и 11.
+
+1. Откройте PowerShell (лучше Windows Terminal: он показывает цвета). Проверьте: `curl.exe --version`.
+2. Создайте и откройте файл профиля (он выполняется при каждом запуске PowerShell):
+
+```powershell
+if (!(Test-Path $PROFILE)) { New-Item -Path $PROFILE -ItemType File -Force }
+notepad $PROFILE
+```
+
+3. Вставьте в файл и сохраните:
+
+```powershell
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+function kb { curl.exe -sG --data-urlencode "q=$args" "https://<worker-domain>/cli" }
+```
+
+Первая строка включает UTF-8, чтобы русский текст и значки отображались правильно.
+
+4. Перезапустите PowerShell и проверьте: `kb docker`.
+
+Если PowerShell пишет, что выполнение сценариев отключено: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. В WSL следуйте инструкции для Linux, в Git Bash как для bash.
+
+### fish
+
+```fish
+function kb
+    curl -sG --data-urlencode "q=$argv" "https://<worker-domain>/cli"
+end
+funcsave kb
+```
+
+`funcsave` сохраняет функцию навсегда, перезапускать ничего не нужно.
+
+### Как пользоваться
 
 ```bash
-kb() { curl -sG --data-urlencode "q=$*" "https://<worker-domain>/cli"; }
+kb vless              # статья про VLESS Reality
+kb docker compose     # несколько слов тоже работают
+kb nginx | less -R    # длинная статья постранично, с цветами
+kb list               # список всех статей по категориям
+kb iptables-basics    # точный id статьи
 ```
 
-Примеры:
+В ответе: 📌 заголовок, категория и теги; 📝 краткое описание; 💻 команды и конфиги в рамках (их можно выделить и скопировать); 🔗 первоисточники со ссылками. Если подходящих статей несколько, показывается лучшая, остальные перечислены в разделе «Ещё по запросу». Поиск идёт по названию, id, тегам и тексту.
+
+Без цветов (например, чтобы сохранить в файл):
 
 ```bash
-kb vless
-kb docker-compose
-kb iptables
-kb list          # список всех статей
+curl -sG --data-urlencode "q=docker" --data-urlencode "plain=1" "https://<worker-domain>/cli" > docker.txt
 ```
 
-Без цветов (для пайпов и файлов): добавьте параметр `plain=1`, например `curl -s "https://<worker-domain>/cli?q=docker&plain=1"`.
+### Если не работает
+
+| Симптом | Причина и решение |
+|---|---|
+| `kb: command not found` | Не выполнили `source` или правили не тот файл (`echo $SHELL`). Откройте новый терминал, проверьте `type kb`. |
+| `curl: command not found` | Установите: `sudo apt install curl` (Debian/Ubuntu), `brew install curl` (macOS). |
+| Вместо цветов `\033[1m` или `←[1m` | Терминал не поддерживает цвета. Используйте современный терминал (Windows Terminal) или вариант с `plain=1`. |
+| Квадраты или кракозябры вместо значков | Кодировка или шрифт: проверьте `locale` (нужен UTF-8), в PowerShell строку `OutputEncoding`. |
+| «Ничего не найдено» | Не ошибка: такого слова нет. Выберите id из выведенного списка статей. |
+| Пустой ответ или 502 | `curl -i "https://<worker-domain>/cli?q=docker&plain=1"`. 502 значит, что Worker не смог загрузить базу с GitHub (обычно лимит API): добавьте секрет `GITHUB_TOKEN`. |
+| В PowerShell ошибка про Invoke-WebRequest | В функции должен быть именно `curl.exe`. |
+| Алиас не работает в вашей оболочке | Используйте функцию: `kb() { curl -sG --data-urlencode "q=$*" "https://<worker-domain>/cli"; }` |
 
 ## 5. Добавление статей
 

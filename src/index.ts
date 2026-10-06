@@ -67,7 +67,7 @@ function parseFrontmatter(raw: string): { meta: Record<string, any>; body: strin
       }
       meta[key] = items;
     } else if (val.startsWith("[")) {
-      meta[key] = val.replace(/^\[\vert{}\]$/g, "").split(",").map(clean).filter(Boolean);
+      meta[key] = val.replace(/^\[|\]$/g, "").split(",").map(clean).filter(Boolean);
     } else {
       meta[key] = clean(val);
     }
@@ -257,6 +257,9 @@ function highlightLine(line: string, lang: string, p: Painter): string {
       )
     );
   }
+  if (/^\s*\[.+\]\s*$/.test(line)) return p(C.bold + C.magenta, line);
+  const kv = line.match(/^(\s*-?\s*)([A-Za-z_][\w.-]*)(\s*[:=])(.*)$/);
+  if (kv) return kv[1] + p(C.cyan, kv[2]) + kv[3] + strs(kv[4]);
   return strs(line);
 }
 
@@ -266,7 +269,7 @@ function codeFrame(lang: string, code: string, p: Painter): string[] {
   const len = (l: string) => [...l].length;
   const width = Math.max(label.length + 4, 24, ...lines.map(len));
   const inner = width + 2;
-  const out = [p(C.gray, `┌─ ${label}${"─".repeat(inner - label.length - 3)}┐`)];
+  const out = [p(C.gray, `┌─ ${label} ${"─".repeat(inner - label.length - 3)}┐`)];
   for (const line of lines) {
     out.push(`${p(C.gray, "│")} ${highlightLine(line, lang, p)}${" ".repeat(width - len(line))} ${p(C.gray, "│")}`);
   }
@@ -277,7 +280,7 @@ function codeFrame(lang: string, code: string, p: Painter): string[] {
 function renderArticleAnsi(a: Article, color: boolean): string {
   const p = painter(color);
   const out: string[] = [];
-  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "\vert{}")} ${p(C.green, a.category)}`);
+  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "|")} ${p(C.green, a.category)}`);
   out.push(p(C.gray, "═".repeat(60)));
   out.push(`📌 ${p(C.bold + C.yellow, a.title)}`);
   if (a.tags.length) out.push(p(C.gray, a.tags.map((t) => "#" + t).join(" ")));
@@ -316,7 +319,7 @@ function renderIndexAnsi(items: Article[], color: boolean, note = ""): string {
   let cat = "";
   for (const a of items) {
     if (a.category !== cat) { cat = a.category; out.push(p(C.bold + C.magenta, `▌ ${cat}`)); }
-    out.push(`  ${p(C.cyan, a.id)} —${a.title}`);
+    out.push(`  ${p(C.cyan, a.id)} — ${a.title}`);
   }
   out.push("", p(C.gray, "Использование: kb <запрос>  |  kb <id>  |  kb list"));
   return out.join("\n");
@@ -484,23 +487,156 @@ async function doSearch(env: Env, chatId: number, q: string) {
   await send(env, chatId, `${BRAND}\n🔎 Результаты по «${esc(q)}»:\n\n${lines.join("\n")}`, { inline_keyboard: listKb(found) });
 }
 
+const pre = (lang: string, code: string) => `<pre><code class="language-${lang}">${esc(code)}</code></pre>`;
+
 function aliasLine(origin: string): string {
   return `alias kb='f() { curl -sG --data-urlencode "q=$*" "${origin}/cli"; }; f'`;
 }
+const psFunction = (origin: string) =>
+  `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\nfunction kb { curl.exe -sG --data-urlencode "q=$args" "${origin}/cli" }`;
+const fishFunction = (origin: string) =>
+  `function kb\n    curl -sG --data-urlencode "q=$argv" "${origin}/cli"\nend\nfuncsave kb`;
+
+/** Текст для кнопки «Скопировать»: topic = nix | win | fish */
+function copySnippet(topic: string, origin: string): { lang: string; code: string; note: string } {
+  if (topic === "win") return { lang: "powershell", code: psFunction(origin), note: "вставьте в файл профиля PowerShell (notepad $PROFILE)" };
+  if (topic === "fish") return { lang: "fish", code: fishFunction(origin), note: "вставьте в терминал fish" };
+  return { lang: "bash", code: aliasLine(origin), note: "добавьте в ~/.bashrc или ~/.zshrc" };
+}
+
+const cliMainKb = (): Kb => [
+  [{ text: "🐧 Linux / macOS", callback_data: "cli:nix" }, { text: "🪟 Windows", callback_data: "cli:win" }],
+  [{ text: "🐟 fish", callback_data: "cli:fish" }, { text: "📖 Примеры", callback_data: "cli:use" }],
+  [{ text: "❓ Если не работает", callback_data: "cli:fix" }],
+  [{ text: "📋 Скопировать команду алиаса", callback_data: "alias" }],
+  [{ text: "🏠 Меню", callback_data: "menu" }],
+];
+const cliNavKb = (topic: string): Kb => [
+  [{ text: "⬅️ К инструкции", callback_data: "cli" }, { text: "📋 Скопировать", callback_data: `alias:${topic}` }],
+  [{ text: "🏠 Меню", callback_data: "menu" }],
+];
 
 async function sendCliHelp(env: Env, chatId: number, origin: string) {
   const text = [
     BRAND,
-    "💻 <b>Терминал (CLI)</b>",
+    "💻 <b>Терминал (CLI): как это работает</b>",
     "",
-    "<b>1. Быстрый запрос без установки:</b>",
-    `<pre><code class="language-bash">curl -s "${esc(origin)}/cli?q=docker"</code></pre>`,
-    "<b>2. Короткая команда <code>kb</code>.</b> Добавьте в <code>~/.bashrc</code> или <code>~/.zshrc</code>:",
-    `<pre><code class="language-bash">${esc(aliasLine(origin))}</code></pre>`,
-    "Затем: <code>source ~/.bashrc</code> и пользуйтесь:",
-    "<pre><code class=\"language-bash\">kb vless\nkb docker-compose\nkb iptables\nkb list</code></pre>",
+    "<b>Что это.</b> Вы вводите в консоли <code>kb docker</code>, и статья из базы знаний появляется прямо в терминале: с цветной подсветкой, готовыми командами в рамках и ссылками на первоисточники. Удобно, когда вы сидите на сервере по SSH и не хотите переключаться на браузер или Telegram.",
+    "",
+    "<b>Что нужно.</b> Только <code>curl</code>. Он уже есть в Linux, macOS и Windows 10/11, ничего устанавливать не надо.",
+    "",
+    `<b>Как устроено.</b> Команда <code>kb</code> это короткий псевдоним. Она отправляет ваш запрос на адрес бота (<code>${esc(origin)}</code>), бот ищет статью в базе и возвращает готовый текст. Сама база хранится в репозитории GitHub.`,
+    "",
+    "<b>Шаг 1. Проверьте, что всё работает</b> (без какой-либо настройки):",
+    pre("bash", `curl -s "${origin}/cli?q=docker"`),
+    "Если пришла статья, всё в порядке. Дальше настроим короткую команду <code>kb</code>, чтобы не набирать длинный адрес. Если не пришла, откройте «Если не работает».",
+    "",
+    "<b>Шаг 2.</b> Выберите свою систему кнопкой ниже: там пошаговая инструкция и объяснение каждой команды.",
   ].join("\n");
-  await send(env, chatId, text, { inline_keyboard: [[{ text: "📋 Скопировать команду алиаса", callback_data: "alias" }], [{ text: "🏠 Меню", callback_data: "menu" }]] });
+  await send(env, chatId, text, { inline_keyboard: cliMainKb() });
+}
+
+async function sendCliGuide(env: Env, chatId: number, origin: string, topic: string) {
+  const o = origin;
+  let text: string;
+  if (topic === "nix") {
+    text = [
+      BRAND,
+      "🐧 <b>Linux / macOS (bash, zsh)</b>",
+      "",
+      "<b>Шаг 1. Узнайте свою оболочку:</b>",
+      pre("bash", "echo $SHELL"),
+      "Если в ответе <code>zsh</code> (это macOS по умолчанию), вы будете править файл <code>~/.zshrc</code>. Если <code>bash</code>, то <code>~/.bashrc</code>. В файле <code>~/.bashrc</code> хранятся ваши настройки терминала, он читается при каждом запуске.",
+      "",
+      "<b>Шаг 2. Добавьте команду</b> <code>kb</code> одним копированием (для bash). Для zsh замените <code>~/.bashrc</code> на <code>~/.zshrc</code>:",
+      pre("bash", `cat >> ~/.bashrc <<'EOF'\n${aliasLine(o)}\nEOF`),
+      "Эта команда дописывает одну строку в конец файла и ничего не стирает.",
+      "",
+      "<b>Что делает эта строка:</b>",
+      "• <code>alias kb=...</code> создаёт слово <code>kb</code>, которое запускает всё в кавычках",
+      "• <code>curl -s</code> делает запрос без индикатора загрузки",
+      "• <code>-G</code> отправляет данные как параметры адреса (GET)",
+      "• <code>--data-urlencode \"q=$*\"</code> берёт все слова после <code>kb</code> и безопасно кодирует их (пробелы, русские буквы), поэтому <code>kb docker compose</code> работает",
+      "",
+      "<b>Шаг 3. Примените без перезапуска терминала:</b>",
+      pre("bash", "source ~/.bashrc"),
+      "<b>Шаг 4. Проверьте:</b>",
+      pre("bash", "kb docker"),
+      "На macOS с bash вместо <code>~/.bashrc</code> используйте <code>~/.bash_profile</code>. Чтобы удалить команду, откройте файл (<code>nano ~/.bashrc</code>) и удалите строку с <code>alias kb</code>.",
+    ].join("\n");
+  } else if (topic === "win") {
+    text = [
+      BRAND,
+      "🪟 <b>Windows (PowerShell)</b>",
+      "",
+      "Важно: в PowerShell слово <code>curl</code> это псевдоним другой команды (Invoke-WebRequest), и она работает иначе. Поэтому ниже используется <code>curl.exe</code>, настоящий curl, встроенный в Windows 10 и 11.",
+      "",
+      "<b>Шаг 1. Откройте PowerShell</b> (лучше Windows Terminal: он показывает цвета) и проверьте curl:",
+      pre("powershell", "curl.exe --version"),
+      "Если команда не найдена, у вас старая версия Windows. Обновитесь или используйте WSL (см. ниже).",
+      "",
+      "<b>Шаг 2. Создайте файл профиля</b> (он выполняется при каждом запуске PowerShell) и откройте его:",
+      pre("powershell", "if (!(Test-Path $PROFILE)) { New-Item -Path $PROFILE -ItemType File -Force }\nnotepad $PROFILE"),
+      "<b>Шаг 3. Вставьте в открывшийся файл и сохраните:</b>",
+      pre("powershell", psFunction(o)),
+      "Первая строка включает UTF-8, чтобы русский текст и значки не превращались в кракозябры. Вторая создаёт команду <code>kb</code>: она передаёт все слова после неё как поисковый запрос.",
+      "",
+      "<b>Шаг 4. Перезапустите PowerShell</b> и проверьте:",
+      pre("powershell", "kb docker"),
+      "<b>Если пишет, что выполнение сценариев отключено:</b>",
+      pre("powershell", "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned"),
+      "<b>Другие варианты:</b> в WSL следуйте инструкции для Linux, в Git Bash как для bash (<code>~/.bashrc</code>). Старый <code>cmd.exe</code> может показывать цветовые коды как <code>←[1m</code>: используйте Windows Terminal.",
+    ].join("\n");
+  } else if (topic === "fish") {
+    text = [
+      BRAND,
+      "🐟 <b>fish shell</b>",
+      "",
+      "В fish нет алиасов с телом как в bash, поэтому команда <code>kb</code> задаётся функцией. Вставьте в терминал fish целиком:",
+      pre("fish", fishFunction(o)),
+      "Что здесь происходит: функция <code>kb</code> отправляет все ваши слова (<code>$argv</code>) как поисковый запрос, а <code>funcsave kb</code> сохраняет её навсегда в <code>~/.config/fish/functions/kb.fish</code>, так что ничего перезапускать не нужно.",
+      "",
+      "<b>Проверьте:</b>",
+      pre("fish", "kb docker"),
+      "Чтобы удалить: <code>functions -e kb; rm ~/.config/fish/functions/kb.fish</code>.",
+    ].join("\n");
+  } else if (topic === "use") {
+    text = [
+      BRAND,
+      "📖 <b>Как пользоваться</b>",
+      "",
+      pre("bash", "kb vless              # статья про VLESS Reality\nkb docker compose     # несколько слов тоже работают\nkb nginx | less -R    # длинная статья постранично, с цветами\nkb list               # список всех статей по категориям\nkb iptables-basics    # точный id статьи"),
+      "<b>Что вы увидите в ответе:</b>",
+      "• 📌 заголовок, категория и теги",
+      "• 📝 краткое описание",
+      "• 💻 команды и конфиги в рамках: их можно выделить мышью и скопировать",
+      "• 🔗 первоисточники: документация, форумы и другие материалы со ссылками",
+      "",
+      "Если подходящих статей несколько, показывается лучшая, а остальные перечислены ниже в разделе «Ещё по запросу» (откройте нужную по её id).",
+      "",
+      "Поиск идёт по названию, id, тегам и тексту статей. Если ничего не найдено, вы получите список всех статей.",
+      "",
+      "<b>Без цветов</b> (например, чтобы сохранить в файл или отправить в чат):",
+      pre("bash", `curl -sG --data-urlencode "q=docker" --data-urlencode "plain=1" "${o}/cli" > docker.txt`),
+    ].join("\n");
+  } else {
+    text = [
+      BRAND,
+      "❓ <b>Если не работает</b>",
+      "",
+      "• <code>kb: command not found</code>: вы не выполнили <code>source</code> или правили не тот файл (проверьте <code>echo $SHELL</code>). Откройте новый терминал и проверьте: <code>type kb</code>.",
+      "• <code>curl: command not found</code>: установите curl. Debian и Ubuntu: <code>sudo apt install curl</code>, macOS: <code>brew install curl</code>.",
+      "• Вместо цветов странные символы вроде <code>\\033[1m</code> или <code>←[1m</code>: терминал не поддерживает цвета. Возьмите современный терминал (в Windows это Windows Terminal) или вариант без цветов из раздела «Примеры».",
+      "• Вместо значков квадраты или кракозябры: проблема кодировки или шрифта. Проверьте <code>locale</code> (нужен UTF-8), в PowerShell строку с <code>OutputEncoding</code>.",
+      "• «Ничего не найдено»: это не ошибка, такого слова в статьях нет. Бот покажет список всех статей, выберите id оттуда.",
+      "• Пустой ответ или ошибка 502: посмотрите код ответа командой ниже. 502 значит, что Worker не смог загрузить базу с GitHub (обычно из-за лимита запросов), напишите администратору бота.",
+      pre("bash", `curl -i "${o}/cli?q=docker&plain=1"`),
+      "• В PowerShell ошибка про Invoke-WebRequest: в функции должно быть именно <code>curl.exe</code> с <code>.exe</code>.",
+      "• Алиас не работает в вашей оболочке: замените его функцией:",
+      pre("bash", `kb() { curl -sG --data-urlencode "q=$*" "${o}/cli"; }`),
+    ].join("\n");
+  }
+  await send(env, chatId, text, { inline_keyboard: cliNavKb(topic === "use" || topic === "fix" ? "nix" : topic) });
 }
 
 async function sendFavs(env: Env, chatId: number, uid: number) {
@@ -582,10 +718,12 @@ async function handleCallback(cb: any, env: Env, origin: string) {
     case "menu": await sendWelcome(env, chatId); break;
     case "all": await sendAll(env, chatId); break;
     case "fav": await sendFavs(env, chatId, uid); break;
-    case "cli": await sendCliHelp(env, chatId, origin); break;
-    case "alias":
-      await send(env, chatId, `📋 Нажмите на команду, чтобы скопировать:\n<pre><code class="language-bash">${esc(aliasLine(origin))}</code></pre>`);
+    case "cli": await (id ? sendCliGuide(env, chatId, origin, id) : sendCliHelp(env, chatId, origin)); break;
+    case "alias": {
+      const c = copySnippet(id, origin);
+      await send(env, chatId, `📋 Нажмите на код, чтобы скопировать.\nКуда вставить: ${c.note}.\n${pre(c.lang, c.code)}`);
       break;
+    }
   }
 }
 
