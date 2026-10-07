@@ -21,7 +21,7 @@ echo "→ setMyCommands"
 curl -s "${API}/setMyCommands" -H 'content-type: application/json' -d '{
   "commands": [
     {"command": "search", "description": "Поиск по базе знаний"},
-    {"command": "all",    "description": "Все статьи"},
+    {"command": "all",    "description": "Разделы базы знаний"},
     {"command": "fav",    "description": "Избранное"},
     {"command": "cli",    "description": "Настройка терминала (kb)"},
     {"command": "help",   "description": "Помощь"}

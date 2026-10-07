@@ -28,6 +28,17 @@ type Block =
   | { t: "code"; lang: string; code: string };
 
 const TG_LIMIT = 3800;
+const PAGE_SIZE = 8;
+
+// Разделы базы знаний: ключ = значение category во frontmatter статьи
+const CATEGORIES: Record<string, { title: string; emoji: string }> = {
+  networking: { title: "Сети и прокси", emoji: "🌐" },
+  security: { title: "Безопасность", emoji: "🛡️" },
+  databases: { title: "Базы данных", emoji: "🗄️" },
+  devops: { title: "DevOps и CI/CD", emoji: "🚀" },
+  linux: { title: "Linux и системы", emoji: "🐧" },
+};
+const catInfo = (c: string) => CATEGORIES[c] ?? { title: c, emoji: "📁" };
 
 // ───────────────────────── Frontmatter + Markdown ─────────────────────────
 
@@ -384,7 +395,7 @@ const send = (env: Env, chatId: number, text: string, reply_markup?: unknown) =>
 type Kb = { text: string; callback_data: string }[][];
 
 const menuKb = (): Kb => [
-  [{ text: "📚 Все статьи", callback_data: "all" }, { text: "📌 Избранное", callback_data: "fav" }],
+  [{ text: "📚 Разделы", callback_data: "all" }, { text: "📌 Избранное", callback_data: "fav" }],
   [{ text: "💻 Терминал (CLI)", callback_data: "cli" }],
 ];
 
@@ -435,12 +446,16 @@ function articleParts(a: Article): string[] {
 const hasCode = (a: Article) => parseBlocks(a.body).some((b) => b.t === "code");
 
 function actionBar(a: Article, isFav: boolean): Kb {
+  const code = hasCode(a);
   const row1 = [];
-  if (hasCode(a)) row1.push({ text: "📋 Скопировать код", callback_data: `c:${a.id}` });
+  if (code) row1.push({ text: "⚡ Только команды", callback_data: `k:${a.id}` });
   row1.push({ text: isFav ? "✅ В избранном" : "📌 В Избранное", callback_data: `f:${a.id}` });
-  return [row1, [
-    { text: "🏷️ Похожие темы", callback_data: `r:${a.id}` },
+  const row2 = [];
+  if (code) row2.push({ text: "📋 Скопировать код", callback_data: `c:${a.id}` });
+  row2.push({ text: "🏷️ Похожие темы", callback_data: `r:${a.id}` });
+  return [row1, row2, [
     { text: "⬅️ Назад", callback_data: "b" },
+    { text: "📚 Разделы", callback_data: "all" },
   ]];
 }
 
@@ -649,19 +664,122 @@ async function sendFavs(env: Env, chatId: number, uid: number) {
   await send(env, chatId, `${BRAND}\n📌 <b>Избранное</b>`, { inline_keyboard: listKb(favs) });
 }
 
-async function sendAll(env: Env, chatId: number) {
+/** Показывает экран: правит исходное сообщение (если пришло по кнопке), иначе шлёт новое */
+async function show(env: Env, cb: any | null, chatId: number, text: string, kb: Kb) {
+  if (cb?.message?.message_id) {
+    const r = await tg(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: cb.message.message_id,
+      text: text.slice(0, 4090),
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      reply_markup: { inline_keyboard: kb },
+    });
+    if (r.ok || String(r.description || "").includes("not modified")) return;
+  }
+  await send(env, chatId, text, { inline_keyboard: kb });
+}
+
+const cbFits = (data: string) => new TextEncoder().encode(data).length <= 64;
+
+async function showCategories(env: Env, cb: any | null, chatId: number) {
   const items = await loadArticles(env);
-  await send(env, chatId, `${BRAND}\n📚 <b>Все статьи</b> (${items.length})`, { inline_keyboard: listKb(items.slice(0, 30)) });
+  const counts = new Map<string, number>();
+  for (const a of items) counts.set(a.category, (counts.get(a.category) ?? 0) + 1);
+  const known = Object.keys(CATEGORIES).filter((c) => counts.has(c));
+  const other = [...counts.keys()].filter((c) => !(c in CATEGORIES)).sort();
+  const kb: Kb = [...known, ...other]
+    .filter((c) => cbFits(`g:${c}:99`))
+    .map((c) => [{ text: `${catInfo(c).emoji} ${catInfo(c).title} (${counts.get(c)})`, callback_data: `g:${c}:0` }]);
+  kb.push([{ text: `📖 Все статьи A-Z (${items.length})`, callback_data: "g:*:0" }]);
+  kb.push([{ text: "🏠 Меню", callback_data: "menu" }]);
+  await show(env, cb, chatId, `${BRAND}\n📚 <b>Разделы базы знаний</b>\nВсего статей: ${items.length}. Выберите раздел:`, kb);
+}
+
+async function showCategoryPage(env: Env, cb: any | null, chatId: number, cat: string, page: number) {
+  const items = await loadArticles(env);
+  const list = cat === "*"
+    ? [...items].sort((a, b) => a.title.localeCompare(b.title, "ru"))
+    : items.filter((a) => a.category === cat);
+  const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const pg = Math.min(Math.max(0, Number.isFinite(page) ? page : 0), pages - 1);
+  const slice = list.slice(pg * PAGE_SIZE, pg * PAGE_SIZE + PAGE_SIZE);
+  const info = cat === "*" ? { emoji: "📖", title: "Все статьи A-Z" } : catInfo(cat);
+
+  const kb: Kb = slice.map((a) => [{ text: `📌 ${a.title}`.slice(0, 60), callback_data: `a:${a.id}` }]);
+  if (pages > 1) {
+    kb.push([
+      pg > 0 ? { text: "◀️", callback_data: `g:${cat}:${pg - 1}` } : { text: "·", callback_data: "noop" },
+      { text: `${pg + 1}/${pages}`, callback_data: "noop" },
+      pg < pages - 1 ? { text: "▶️", callback_data: `g:${cat}:${pg + 1}` } : { text: "·", callback_data: "noop" },
+    ]);
+  }
+  kb.push([{ text: "⬅️ Разделы", callback_data: "all" }, { text: "🏠 Меню", callback_data: "menu" }]);
+  const head = `${BRAND}\n${info.emoji} <b>${esc(info.title)}</b> · статей: ${list.length}` + (pages > 1 ? ` · страница ${pg + 1} из ${pages}` : "");
+  await show(env, cb, chatId, list.length ? head : `${head}\n\nВ этом разделе пока нет статей.`, kb);
+}
+
+/** Шпаргалка: только блоки кода статьи, с заголовками разделов */
+function cheatsheetParts(a: Article): string[] {
+  const parts: string[] = [`${BRAND}\n⚡ <b>Команды: ${esc(a.title)}</b>`];
+  let heading = "";
+  let printed = true;
+  let blocks = 0;
+  for (const b of parseBlocks(a.body)) {
+    if (b.t === "h") {
+      if (b.level > 1) { heading = b.text; printed = false; }
+    } else if (b.t === "code") {
+      blocks++;
+      if (heading && !printed) { parts.push(`\n<b>${esc(heading)}</b>`); printed = true; }
+      parts.push(...codeParts(b.code, b.lang));
+    }
+  }
+  if (!blocks) parts.push("\nВ этой статье нет блоков с командами.");
+  return parts;
+}
+
+async function sendCheatsheet(env: Env, chatId: number, a: Article) {
+  const pages = paginate(cheatsheetParts(a));
+  for (let i = 0; i < pages.length; i++) {
+    const last = i === pages.length - 1;
+    await send(env, chatId, pages[i], last ? { inline_keyboard: [
+      [{ text: "📖 Открыть статью", callback_data: `a:${a.id}` }, { text: "📋 Копировать по блокам", callback_data: `c:${a.id}` }],
+      [{ text: "📚 Разделы", callback_data: "all" }, { text: "🏠 Меню", callback_data: "menu" }],
+    ] } : undefined);
+  }
 }
 
 async function sendWelcome(env: Env, chatId: number) {
   await send(env, chatId, [
     BRAND,
     "",
-    "База знаний по Linux, DevOps, сетям, виртуализации и безопасности.",
-    "Отправьте любое слово для поиска, например <code>docker</code>, или используйте <code>/search &lt;запрос&gt;</code>.",
+    "База знаний по Linux, DevOps, сетям, базам данных и безопасности.",
     "",
-    "Команды: /search · /fav · /all · /cli · /help",
+    "• Отправьте слово для поиска, например <code>docker</code>",
+    "• /all открывает разделы со статьями",
+    "• В статье есть кнопка «⚡ Только команды»: шпаргалка без лишнего текста",
+    "",
+    "Команды: /search · /all · /fav · /cli · /help",
+  ].join("\n"), { inline_keyboard: menuKb() });
+}
+
+async function sendHelp(env: Env, chatId: number) {
+  await send(env, chatId, [
+    BRAND,
+    "<b>Как пользоваться</b>",
+    "",
+    "🔎 <b>Поиск.</b> Отправьте слово или фразу: <code>docker</code>, <code>wireguard</code>, <code>ssh туннель</code>. Поиск идёт по названию, id, тегам и тексту статей. Команда <code>/search &lt;запрос&gt;</code> делает то же самое.",
+    "",
+    "📚 <b>Разделы.</b> Команда /all открывает разделы: сети, безопасность, базы данных, DevOps, Linux. Внутри раздела статьи листаются кнопками ◀️ ▶️, а «Все статьи A-Z» показывает всю базу.",
+    "",
+    "📄 <b>Кнопки под статьёй:</b>",
+    "• ⚡ <b>Только команды</b>: только блоки кода с заголовками разделов, без пояснений. Быстрая шпаргалка.",
+    "• 📋 <b>Скопировать код</b>: каждый блок отдельным сообщением (нажмите на код, чтобы скопировать).",
+    "• 📌 <b>В Избранное</b>: сохранить статью, список открывается командой /fav.",
+    "• 🏷️ <b>Похожие темы</b>: соседние статьи.",
+    "• ⬅️ <b>Назад</b>: к последнему поиску. 📚 <b>Разделы</b>: к списку разделов.",
+    "",
+    "💻 <b>Терминал.</b> Команда /cli показывает, как пользоваться этой базой прямо из консоли.",
   ].join("\n"), { inline_keyboard: menuKb() });
 }
 
@@ -716,7 +834,18 @@ async function handleCallback(cb: any, env: Env, origin: string) {
       break;
     }
     case "menu": await sendWelcome(env, chatId); break;
-    case "all": await sendAll(env, chatId); break;
+    case "all": await showCategories(env, cb, chatId); break;
+    case "g": {
+      const i = id.lastIndexOf(":");
+      await showCategoryPage(env, cb, chatId, i === -1 ? id : id.slice(0, i), i === -1 ? 0 : Number(id.slice(i + 1)));
+      break;
+    }
+    case "k": {
+      const a = (await loadArticles(env)).find((x) => x.id === id);
+      if (a) await sendCheatsheet(env, chatId, a);
+      break;
+    }
+    case "noop": break;
     case "fav": await sendFavs(env, chatId, uid); break;
     case "cli": await (id ? sendCliGuide(env, chatId, origin, id) : sendCliHelp(env, chatId, origin)); break;
     case "alias": {
@@ -738,13 +867,13 @@ async function handleUpdate(u: any, env: Env, origin: string) {
   if (!cmd) return doSearch(env, chatId, text);
   const arg = (cmd[2] || "").trim();
   switch (cmd[1].toLowerCase()) {
-    case "start":
-    case "help": return sendWelcome(env, chatId);
+    case "start": return sendWelcome(env, chatId);
+    case "help": return sendHelp(env, chatId);
     case "search":
       return arg ? doSearch(env, chatId, arg) : send(env, chatId, `${BRAND}\nУкажите запрос: <code>/search docker</code>`);
     case "cli": return sendCliHelp(env, chatId, origin);
     case "fav": return sendFavs(env, chatId, uid);
-    case "all": return sendAll(env, chatId);
+    case "all": return showCategories(env, null, chatId);
     default: return sendWelcome(env, chatId);
   }
 }
