@@ -1,6 +1,8 @@
 // Research Centre — Cloudflare Worker
 // Роуты: POST /telegram-webhook (Telegram), GET /cli?q=<query> (терминал, ANSI)
 
+import { installSh, installPs1 } from "./scripts";
+
 export interface Env {
   KB_KV?: KVNamespace;
   TELEGRAM_BOT_TOKEN: string;
@@ -288,11 +290,14 @@ function codeFrame(lang: string, code: string, p: Painter): string[] {
   return out;
 }
 
+const articleHeader = (a: Article, p: Painter): string[] => [
+  `${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "|")} ${p(C.green, a.category)}`,
+  p(C.gray, "═".repeat(60)),
+];
+
 function renderArticleAnsi(a: Article, color: boolean): string {
   const p = painter(color);
-  const out: string[] = [];
-  out.push(`${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "KNOWLEDGE BASE")} ${p(C.gray, "|")} ${p(C.green, a.category)}`);
-  out.push(p(C.gray, "═".repeat(60)));
+  const out: string[] = [...articleHeader(a, p)];
   out.push(`📌 ${p(C.bold + C.yellow, a.title)}`);
   if (a.tags.length) out.push(p(C.gray, a.tags.map((t) => "#" + t).join(" ")));
   out.push("");
@@ -329,36 +334,177 @@ function renderIndexAnsi(items: Article[], color: boolean, note = ""): string {
   if (note) out.push(note, "");
   let cat = "";
   for (const a of items) {
-    if (a.category !== cat) { cat = a.category; out.push(p(C.bold + C.magenta, `▌ ${cat}`)); }
+    if (a.category !== cat) {
+      cat = a.category;
+      out.push(p(C.bold + C.magenta, `▌ ${catInfo(cat).emoji} ${catInfo(cat).title} (${cat})`));
+    }
     out.push(`  ${p(C.cyan, a.id)} — ${a.title}`);
   }
-  out.push("", p(C.gray, "Использование: kb <запрос>  |  kb <id>  |  kb list"));
+  out.push("", p(C.gray, "kb <запрос> · kb -c <запрос> только команды · kb -s <запрос> источники · kb cat <раздел> · kb -h справка"));
   return out.join("\n");
 }
 
+// ───────────────────────── CLI: флаги и режимы ─────────────────────────
+
+type CliMode = "article" | "code" | "sources" | "cat" | "list" | "help";
+
+/** Разбирает строку q: флаги -c -s -p -h (можно вместе: -cp), подкоманды cat и list */
+function parseCli(q: string): { mode: CliMode; plain: boolean; rest: string } {
+  const tokens = q.trim().split(/\s+/).filter(Boolean);
+  let mode: CliMode = "article";
+  let plain = false;
+  let i = 0;
+  for (; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === "--code") mode = "code";
+    else if (t === "--sources") mode = "sources";
+    else if (t === "--plain") plain = true;
+    else if (t === "--help") mode = "help";
+    else if (/^-[csph]+$/.test(t)) {
+      for (const ch of t.slice(1)) {
+        if (ch === "c") mode = "code";
+        else if (ch === "s") mode = "sources";
+        else if (ch === "p") plain = true;
+        else if (ch === "h") mode = "help";
+      }
+    } else break;
+  }
+  const rest = tokens.slice(i);
+  if (mode === "article") {
+    if (rest[0]?.toLowerCase() === "cat") return { mode: "cat", plain, rest: rest.slice(1).join(" ") };
+    if (rest.length === 0 || (rest.length === 1 && rest[0].toLowerCase() === "list")) return { mode: "list", plain, rest: "" };
+  }
+  return { mode, plain, rest: rest.join(" ") };
+}
+
+function resolveCategory(items: Article[], name: string): string | null {
+  const n = name.trim().toLowerCase();
+  if (!n) return null;
+  const cats = [...new Set(items.map((a) => a.category))];
+  return (
+    cats.find((c) => c.toLowerCase() === n || catInfo(c).title.toLowerCase() === n) ??
+    cats.find((c) => n.length >= 2 && c.toLowerCase().startsWith(n)) ??
+    cats.find((c) => n.length >= 3 && catInfo(c).title.toLowerCase().includes(n)) ??
+    null
+  );
+}
+
+function renderCatAnsi(items: Article[], color: boolean, arg: string): string {
+  const p = painter(color);
+  const head = [
+    `${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "РАЗДЕЛЫ")}`,
+    p(C.gray, "═".repeat(60)),
+  ];
+  const cats = [...new Set(items.map((a) => a.category))];
+  const listCats = () => cats.map((c) => {
+    const n = items.filter((a) => a.category === c).length;
+    return `  ${p(C.cyan, c.padEnd(12))} ${catInfo(c).emoji} ${catInfo(c).title} ${p(C.gray, `(${n})`)}`;
+  });
+  if (!arg.trim()) return [...head, ...listCats(), "", p(C.gray, "Статьи раздела: kb cat <раздел>, например kb cat security")].join("\n");
+  const cat = resolveCategory(items, arg);
+  if (!cat) {
+    return [...head, p(C.bold, `Раздел «${arg}» не найден. Доступные:`), "", ...listCats()].join("\n");
+  }
+  const list = items.filter((a) => a.category === cat);
+  return [
+    ...head,
+    `${catInfo(cat).emoji} ${p(C.bold + C.yellow, catInfo(cat).title)} ${p(C.gray, `(${cat}, статей: ${list.length})`)}`,
+    "",
+    ...list.map((a) => `  ${p(C.cyan, a.id)} — ${a.title}`),
+    "",
+    p(C.gray, "Открыть: kb <id>, только команды: kb -c <id>"),
+  ].join("\n");
+}
+
+function renderCodeAnsi(a: Article, color: boolean): string {
+  const p = painter(color);
+  const out: string[] = [...articleHeader(a, p), `⚡ ${p(C.bold + C.yellow, a.title)}`, ""];
+  let heading = "";
+  let printed = true;
+  let blocks = 0;
+  for (const b of parseBlocks(a.body)) {
+    if (b.t === "h") {
+      if (b.level > 1) { heading = b.text; printed = false; }
+    } else if (b.t === "code") {
+      blocks++;
+      if (heading && !printed) { out.push(p(C.bold + C.magenta, `▌ ${heading}`)); printed = true; }
+      out.push(...codeFrame(b.lang, b.code, p), "");
+    }
+  }
+  if (!blocks) out.push("В этой статье нет блоков с командами.");
+  return out.join("\n");
+}
+
+function renderSourcesAnsi(a: Article, color: boolean): string {
+  const p = painter(color);
+  const out: string[] = [...articleHeader(a, p), `🔗 ${p(C.bold, "Первоисточники:")} ${p(C.bold + C.yellow, a.title)}`, ""];
+  if (!a.sources.length) out.push("У статьи нет списка источников.");
+  a.sources.forEach((s, i) => out.push(`${String(i + 1).padStart(2)}. ${s.title}`, `    ${p(C.underline + C.blue, s.url)}`));
+  return out.join("\n");
+}
+
+function renderHelpAnsi(color: boolean): string {
+  const p = painter(color);
+  const row = (cmd: string, text: string) => `  ${p(C.cyan, cmd.padEnd(18))} ${text}`;
+  return [
+    `${p(C.bold + C.blue, "🔬 RESEARCH CENTRE")} ${p(C.gray, "//")} ${p(C.bold + C.green, "СПРАВКА kb")}`,
+    p(C.gray, "═".repeat(60)),
+    row("kb <запрос>", "найти статью и показать её целиком"),
+    row("kb -c <запрос>", "только команды и конфиги (шпаргалка)"),
+    row("kb -s <запрос>", "только первоисточники (ссылки)"),
+    row("kb cat", "список разделов"),
+    row("kb cat <раздел>", "статьи раздела (security, networking, ...)"),
+    row("kb list", "все статьи по разделам"),
+    row("kb -p <запрос>", "без цветов (для файла или канала)"),
+    row("kb -h", "эта справка"),
+    "",
+    "Флаги можно совмещать: " + p(C.cyan, "kb -cp docker"),
+    "Нажмите Tab после kb, чтобы дополнить id статьи или раздел.",
+    "Длинную статью удобно листать: " + p(C.cyan, "kb nginx | less -R"),
+  ].join("\n");
+}
+
 async function handleCli(url: URL, env: Env): Promise<Response> {
-  const q = (url.searchParams.get("q") || "").trim();
-  const color = !["1", "true"].includes(url.searchParams.get("plain") || "");
+  const cmd = parseCli(url.searchParams.get("q") || "");
+  const color = !cmd.plain && !["1", "true"].includes(url.searchParams.get("plain") || "");
   const p = painter(color);
   const headers = { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" };
   try {
+    if (cmd.mode === "help") return new Response(renderHelpAnsi(color) + "\n", { headers });
     const items = await loadArticles(env);
-    if (!q || q.toLowerCase() === "list") {
-      return new Response(renderIndexAnsi(items, color) + "\n", { headers });
+    if (cmd.mode === "list") return new Response(renderIndexAnsi(items, color) + "\n", { headers });
+    if (cmd.mode === "cat") return new Response(renderCatAnsi(items, color, cmd.rest) + "\n", { headers });
+    if (!cmd.rest) {
+      const flag = cmd.mode === "code" ? "-c" : "-s";
+      return new Response(`${p(C.bold, "Укажите, что искать")}, например: kb ${flag} docker\n\n${renderHelpAnsi(color)}\n`, { status: 400, headers });
     }
-    const found = search(items, q);
+    const found = search(items, cmd.rest);
     if (!found.length) {
-      const msg = `${p(C.bold, "Ничего не найдено по запросу")} "${q}".`;
+      const msg = `${p(C.bold, "Ничего не найдено по запросу")} "${cmd.rest}".`;
       return new Response(renderIndexAnsi(items, color, msg) + "\n", { status: 404, headers });
     }
-    let text = renderArticleAnsi(found[0], color);
+    const render = cmd.mode === "code" ? renderCodeAnsi : cmd.mode === "sources" ? renderSourcesAnsi : renderArticleAnsi;
+    const prefix = cmd.mode === "code" ? "kb -c " : cmd.mode === "sources" ? "kb -s " : "kb ";
+    let text = render(found[0], color);
     if (found.length > 1) {
       text += `\n\n${p(C.bold, "Ещё по запросу:")}\n` +
-        found.slice(1, 5).map((a) => `  ${p(C.cyan, "kb " + a.id)} — ${a.title}`).join("\n");
+        found.slice(1, 5).map((a) => `  ${p(C.cyan, prefix + a.id)} — ${a.title}`).join("\n");
     }
     return new Response(text + "\n", { headers });
   } catch (e) {
     return new Response(`🔬 RESEARCH CENTRE: ошибка загрузки базы знаний (${(e as Error).message})\n`, { status: 502, headers });
+  }
+}
+
+/** Список id (или разделов) для автодополнения по Tab: по одному значению в строке */
+async function handleIds(url: URL, env: Env): Promise<Response> {
+  const headers = { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=60" };
+  try {
+    const items = await loadArticles(env);
+    const values = url.searchParams.get("type") === "cats" ? [...new Set(items.map((a) => a.category))] : items.map((a) => a.id);
+    return new Response(values.join("\n") + "\n", { headers });
+  } catch {
+    return new Response("", { status: 502, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
 }
 
@@ -884,6 +1030,13 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/cli") return handleCli(url, env);
+    if (req.method === "GET" && url.pathname === "/ids") return handleIds(url, env);
+    if (req.method === "GET" && (url.pathname === "/install" || url.pathname === "/install.sh")) {
+      return new Response(installSh(url.origin), { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    }
+    if (req.method === "GET" && url.pathname === "/install.ps1") {
+      return new Response(installPs1(url.origin), { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+    }
     if (req.method === "POST" && url.pathname === "/telegram-webhook") {
       if (env.WEBHOOK_SECRET && req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
         return new Response("Forbidden", { status: 403 });
