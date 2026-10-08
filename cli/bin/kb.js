@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import { startRepl } from '../src/app.js';
 import { APP_NAME, APP_VERSION } from '../src/config.js';
 
