@@ -4,10 +4,10 @@
   "description": "Интерактивная консоль (REPL) для базы знаний Research Centre",
   "type": "module",
   "bin": {
-    "kb": "./bin/kb.js"
+    "kb": "./bin/kb.mjs"
   },
   "scripts": {
-    "start": "node bin/kb.js",
+    "start": "node bin/kb.mjs",
     "test": "node --test",
     "build:win": "pkg . --targets node18-win-x64 --out-path ./dist",
     "build:linux": "pkg . --targets node18-linux-x64 --out-path ./dist",
