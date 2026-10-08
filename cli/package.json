@@ -9,24 +9,17 @@
   "scripts": {
     "start": "node bin/kb.js",
     "test": "node --test",
-    "build:win": "pkg . --targets node18-win-x64 --out-path ./dist",
-    "build:linux": "pkg . --targets node18-linux-x64 --out-path ./dist",
-    "build:all": "pkg . --targets node18-win-x64,node18-linux-x64 --out-path ./dist"
-  },
-  "pkg": {
-    "scripts": [
-      "src/**/*.js"
-    ],
-    "assets": [
-      "src/**/*"
-    ],
-    "outputPath": "dist"
+    "bundle": "npx esbuild bin/kb.js --bundle --platform=node --target=node18 --format=cjs --outfile=dist/bundle.cjs",
+    "build:win": "npm run bundle && npx pkg dist/bundle.cjs --targets node18-win-x64 --out-path ./dist --output kb.exe"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
   },
   "keywords": [
     "knowledge-base",
