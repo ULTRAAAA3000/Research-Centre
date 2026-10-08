@@ -362,6 +362,77 @@ async function handleCli(url: URL, env: Env): Promise<Response> {
   }
 }
 
+// ───────────────────────── JSON API (для утилиты kb на Node.js) ─────────────────────────
+
+const stripMd = (s: string) => s.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[`*]/g, "");
+
+/** Краткое описание: первый абзац статьи без разметки, не длиннее max символов */
+function summaryOf(a: Article, max = 180): string {
+  const p = parseBlocks(a.body).find((b) => b.t === "p");
+  const t = p && p.t === "p" ? stripMd(p.text).trim() : "";
+  return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
+}
+
+const briefOf = (a: Article) => ({ id: a.id, title: a.title, category: a.category, tags: a.tags, summary: summaryOf(a) });
+
+function findCategory(items: Article[], name: string): string | null {
+  const n = name.trim().toLowerCase();
+  if (!n) return null;
+  const cats = [...new Set(items.map((a) => a.category))];
+  return (
+    cats.find((c) => c.toLowerCase() === n || catInfo(c).title.toLowerCase() === n) ??
+    cats.find((c) => n.length >= 2 && c.toLowerCase().startsWith(n)) ??
+    cats.find((c) => n.length >= 3 && catInfo(c).title.toLowerCase().includes(n)) ??
+    null
+  );
+}
+
+async function handleApi(url: URL, env: Env): Promise<Response> {
+  const json = (data: unknown, status = 200) =>
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "access-control-allow-origin": "*" },
+    });
+  try {
+    const items = await loadArticles(env);
+    const categories = () => [...new Set(items.map((a) => a.category))].map((c) => ({
+      key: c, title: catInfo(c).title, emoji: catInfo(c).emoji, count: items.filter((a) => a.category === c).length,
+    }));
+    const q = (url.searchParams.get("q") || "").trim();
+
+    switch (url.pathname) {
+      case "/api/status":
+        return json({ ok: true, service: "research-centre", articles: items.length, categories: categories().length });
+      case "/api/categories":
+        return json({ categories: categories() });
+      case "/api/search": {
+        if (!q) return json({ error: "Параметр q обязателен" }, 400);
+        const found = search(items, q);
+        return json({ query: q, count: found.length, results: found.slice(0, 20).map(briefOf) });
+      }
+      case "/api/topic": {
+        const name = (url.searchParams.get("name") || "").trim();
+        if (!name) return json({ error: "Параметр name обязателен", categories: categories() }, 400);
+        const key = findCategory(items, name);
+        if (!key) return json({ error: `Раздел «${name}» не найден`, categories: categories() }, 404);
+        const list = items.filter((a) => a.category === key);
+        return json({ category: { key, title: catInfo(key).title, emoji: catInfo(key).emoji, count: list.length }, articles: list.map(briefOf) });
+      }
+      case "/api/article": {
+        const id = (url.searchParams.get("id") || "").trim().toLowerCase();
+        if (!id) return json({ error: "Параметр id обязателен" }, 400);
+        const a = items.find((x) => x.id.toLowerCase() === id);
+        if (!a) return json({ error: `Статья «${id}» не найдена`, suggestions: search(items, id).slice(0, 3).map(briefOf) }, 404);
+        return json({ article: { ...briefOf(a), sources: a.sources, body: a.body } });
+      }
+      default:
+        return json({ error: "Неизвестный адрес API", endpoints: ["/api/status", "/api/categories", "/api/search?q=", "/api/topic?name=", "/api/article?id="] }, 404);
+    }
+  } catch (e) {
+    return json({ error: `Не удалось загрузить базу знаний: ${(e as Error).message}` }, 502);
+  }
+}
+
 // ───────────────────────── Telegram ─────────────────────────
 
 const BRAND = "🔬 <b>Research Centre</b>";
@@ -884,6 +955,7 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/cli") return handleCli(url, env);
+    if (req.method === "GET" && url.pathname.startsWith("/api/")) return handleApi(url, env);
     if (req.method === "POST" && url.pathname === "/telegram-webhook") {
       if (env.WEBHOOK_SECRET && req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
         return new Response("Forbidden", { status: 403 });

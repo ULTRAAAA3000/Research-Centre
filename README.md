@@ -16,7 +16,8 @@ Telegram ──► /telegram-webhook ─┐
 ## Структура репозитория
 
 ```
-src/index.ts      Worker: роутинг, поиск, Telegram-бот, ANSI-рендер
+src/index.ts      Worker: роутинг, поиск, Telegram-бот, ANSI-рендер, JSON-API
+cli/              Node.js-утилита kb (интерактивная консоль, npm link)
 kb/*.md           Статьи базы знаний
 wrangler.toml     Конфигурация Worker
 scripts/          set-webhook.sh — подключение вебхука и меню команд
@@ -202,6 +203,20 @@ curl -sG --data-urlencode "q=docker" --data-urlencode "plain=1" "https://<worker
 | Пустой ответ или 502 | `curl -i "https://<worker-domain>/cli?q=docker&plain=1"`. 502 значит, что Worker не смог загрузить базу с GitHub (обычно лимит API): добавьте секрет `GITHUB_TOKEN`. |
 | В PowerShell ошибка про Invoke-WebRequest | В функции должен быть именно `curl.exe`. |
 | Алиас не работает в вашей оболочке | Используйте функцию: `kb() { curl -sG --data-urlencode "q=$*" "https://<worker-domain>/cli"; }` |
+
+## Интерактивная консоль kb (Node.js)
+
+Для работы с базой из терминала есть отдельная утилита с собственной консолью (REPL): команды вводятся внутри процесса и не попадают в историю оболочки, ответы красиво форматируются (цвета, кликабельные ссылки), а лог сессии сохраняется в `cli/logs/`.
+
+```bash
+git clone https://github.com/ULTRAAAA3000/Research-Centre.git
+cd Research-Centre/cli
+npm install
+npm link
+kb
+```
+
+Внутри консоли: `-s <запрос>` поиск, `-c` разделы, `-t <раздел>` статьи раздела, `-i <id>` полная статья, `help`, `status`, `clear`, `exit`. Полная инструкция: [cli/README.md](cli/README.md). Утилита работает через JSON-API этого Worker (`/api/status`, `/api/search`, `/api/categories`, `/api/topic`, `/api/article`), ничего дополнительно настраивать не нужно.
 
 ## 5. Добавление статей
 

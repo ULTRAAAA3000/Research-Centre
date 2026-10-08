@@ -1,0 +1,21 @@
+{
+  "name": "research-kb-cli",
+  "version": "1.0.0",
+  "description": "Интерактивная консоль (REPL) для базы знаний Research Centre",
+  "type": "module",
+  "bin": {
+    "kb": "./bin/kb.js"
+  },
+  "scripts": {
+    "start": "node bin/kb.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0"
+  },
+  "keywords": ["knowledge-base", "cli", "repl", "devops"],
+  "license": "MIT"
+}
