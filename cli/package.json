@@ -8,7 +8,17 @@
   },
   "scripts": {
     "start": "node bin/kb.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build:win": "pkg . --targets node18-win-x64 --out-path ./dist",
+    "build:linux": "pkg . --targets node18-linux-x64 --out-path ./dist",
+    "build:all": "pkg . --targets node18-win-x64,node18-linux-x64 --out-path ./dist"
+  },
+  "pkg": {
+    "scripts": "src/**/*.js",
+    "assets": [
+      "src/**/*"
+    ],
+    "outputPath": "dist"
   },
   "engines": {
     "node": ">=18"
@@ -16,6 +26,11 @@
   "dependencies": {
     "chalk": "^5.3.0"
   },
-  "keywords": ["knowledge-base", "cli", "repl", "devops"],
+  "keywords": [
+    "knowledge-base",
+    "cli",
+    "repl",
+    "devops"
+  ],
   "license": "MIT"
 }
