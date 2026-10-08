@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 /**
  * Адрес Cloudflare Worker с базой знаний.
@@ -13,18 +12,16 @@ export const REQUEST_TIMEOUT_MS = Number(process.env.KB_TIMEOUT_MS) || 10_000;
 /** Приглашение ввода. */
 export const PROMPT_TEXT = '[Research-KB] > ';
 
-/** Папка логов по умолчанию: logs/ рядом с проектом (не зависит от текущей директории). */
-export const DEFAULT_LOG_DIR = fileURLToPath(new URL('../logs/', import.meta.url));
+/**
+ * Папка логов по умолчанию: папка logs в текущей директории запуска терминала (process.cwd()).
+ * Это гарантирует корректную запись файлов даже в скомпилированном pkg бинарнике.
+ */
+export const DEFAULT_LOG_DIR = path.resolve(process.cwd(), 'logs');
 
 /** Папка логов (переопределяется переменной KB_LOG_DIR). */
 export const LOG_DIR = process.env.KB_LOG_DIR || DEFAULT_LOG_DIR;
 
 export const APP_NAME = 'Research Centre KB';
 
-export const APP_VERSION = (() => {
-  try {
-    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-  } catch {
-    return '1.0.0';
-  }
-})();
+/** Версия приложения */
+export const APP_VERSION = '1.0.0';
