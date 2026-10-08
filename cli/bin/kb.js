@@ -18,6 +18,8 @@ if (first === '--version' || first === '-v') {
 
 Внутри консоли: help, -s <запрос>, -c, -t <раздел>, -i <id>, status, clear, exit`);
 } else {
-  await startRepl();
-  process.exit(0);
+  (async () => {
+    await startRepl();
+    process.exit(0);
+  })();
 }
