@@ -216,8 +216,9 @@ export function formatSearch(data, { topic = null } = {}) {
 export function formatCategories(data) {
   const list = data.categories || [];
   const lines = [chalk.bold(`📚 Разделы базы знаний (${list.length})`), ''];
+  const keyWidth = Math.max(...list.map((c) => c.key.length), 8);
   for (const c of list) {
-    lines.push(`  ${c.emoji} ${chalk.cyan(c.key.padEnd(12))} ${c.title} ${chalk.gray(`(${c.count})`)}`);
+    lines.push(`  ${c.emoji} ${chalk.cyan(c.key.padEnd(keyWidth))} ${c.title} ${chalk.gray(`(${c.count})`)}`);
   }
   lines.push('', chalk.gray('Статьи раздела: -t <раздел>, например -t security'));
   return lines.join('\n');
@@ -267,7 +268,8 @@ export function formatApiError(err) {
   const categories = err.body?.categories;
   if (categories?.length) {
     out.push(chalk.gray('Доступные разделы:'));
-    for (const c of categories) out.push(`  ${c.emoji} ${chalk.cyan(c.key.padEnd(12))} ${c.title}`);
+    const keyWidth = Math.max(...categories.map((c) => c.key.length), 8);
+    for (const c of categories) out.push(`  ${c.emoji} ${chalk.cyan(c.key.padEnd(keyWidth))} ${c.title}`);
   }
   return out.join('\n');
 }

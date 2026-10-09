@@ -37,6 +37,7 @@ const CATEGORIES: Record<string, { title: string; emoji: string }> = {
   databases: { title: "Базы данных", emoji: "🗄️" },
   devops: { title: "DevOps и CI/CD", emoji: "🚀" },
   linux: { title: "Linux и системы", emoji: "🐧" },
+  ubuntu_commands: { title: "Команды Linux / Ubuntu", emoji: "💻" },
 };
 const catInfo = (c: string) => CATEGORIES[c] ?? { title: c, emoji: "📁" };
 
@@ -855,7 +856,7 @@ async function sendHelp(env: Env, chatId: number) {
     "",
     "🔎 <b>Поиск.</b> Отправьте слово или фразу: <code>docker</code>, <code>wireguard</code>, <code>ssh туннель</code>. Поиск идёт по названию, id, тегам и тексту статей. Команда <code>/search &lt;запрос&gt;</code> делает то же самое.",
     "",
-    "📚 <b>Разделы.</b> Команда /all открывает разделы: сети, безопасность, базы данных, DevOps, Linux. Внутри раздела статьи листаются кнопками ◀️ ▶️, а «Все статьи A-Z» показывает всю базу.",
+    "📚 <b>Разделы.</b> Команда /all открывает разделы: сети, безопасность, базы данных, DevOps, Linux и команды Linux / Ubuntu (шпаргалки по sudo, сети, пакетам, UFW и другому). Внутри раздела статьи листаются кнопками ◀️ ▶️, а «Все статьи A-Z» показывает всю базу.",
     "",
     "📄 <b>Кнопки под статьёй:</b>",
     "• ⚡ <b>Только команды</b>: только блоки кода с заголовками разделов, без пояснений. Быстрая шпаргалка.",
