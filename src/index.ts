@@ -136,8 +136,22 @@ async function loadArticles(env: Env): Promise<Article[]> {
       : `Bearer ${tok}`;
   }
 
+  // Если токен недействителен (401), повторяем запрос без него: репозиторий публичный.
+  // Так просроченный или чужой секрет GITHUB_TOKEN не ломает бота (но лучше обновить или удалить такой секрет).
+  let auth = headers;
+  const gh = async (url: string): Promise<Response> => {
+    const first = await fetch(url, { headers: auth });
+    if (first.status !== 401 || !auth.Authorization) return first;
+    const { Authorization: _rejected, ...anonymous } = auth;
+    const retry = await fetch(url, { headers: anonymous });
+    if (!retry.ok) return first; // репозиторий приватный: показываем исходную ошибку 401
+    console.warn("GITHUB_TOKEN отклонён GitHub (401), запрос повторён без токена. Обновите или удалите секрет.");
+    auth = anonymous;
+    return retry;
+  };
+
   const listUrl = `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${env.KB_PATH}?ref=${env.GITHUB_BRANCH}`;
-  const res = await fetch(listUrl, { headers });
+  const res = await gh(listUrl);
   if (!res.ok) throw new Error(`GitHub API ${res.status}: ${(await res.text()).slice(0, 160)}`);
   
   const files = (await res.json()) as { name: string; type: string; download_url: string | null }[];
@@ -146,7 +160,7 @@ async function loadArticles(env: Env): Promise<Article[]> {
     files
       .filter((f) => f.type === "file" && f.name.endsWith(".md") && f.download_url)
       .map(async (f): Promise<Article> => {
-        const r = await fetch(f.download_url!, { headers });
+        const r = await gh(f.download_url!);
         if (!r.ok) throw new Error(`GitHub raw ${r.status}: ${f.name}`);
         const rawText = await r.text();
         const { meta, body } = parseFrontmatter(rawText);
