@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { tokenize, parseInput } from '../src/app.js';
+import { tokenize, parseInput, resolveArticleRef } from '../src/app.js';
 
 test('tokenize: кавычки объединяют слова, пробелы разделяют', () => {
   assert.deepEqual(tokenize('-s "zero trust"').map((t) => t.text), ['-s', 'zero trust']);
@@ -61,4 +61,18 @@ test('лишние слова после -c попадают в extra', () => {
 test('отрицательные числа и дефисы внутри слов не флаги', () => {
   assert.equal(parseInput('wireguard-vpn').search, 'wireguard-vpn');
   assert.equal(parseInput('-s 3-2-1').search, '3-2-1');
+});
+
+test('resolveArticleRef: число берёт id из списка, остальное остаётся id', () => {
+  const list = ['docker-compose', 'wireguard-vpn', 'fail2ban-hardening'];
+  assert.deepEqual(resolveArticleRef('2', list), { id: 'wireguard-vpn' });
+  assert.deepEqual(resolveArticleRef(' 3 ', list), { id: 'fail2ban-hardening' });
+  assert.deepEqual(resolveArticleRef('wireguard-vpn', list), { id: 'wireguard-vpn' });
+  assert.deepEqual(resolveArticleRef('wireguard-vpn'), { id: 'wireguard-vpn' });
+});
+
+test('resolveArticleRef: понятные ошибки для пустого списка и номера вне диапазона', () => {
+  assert.match(resolveArticleRef('1', []).error, /сначала выполните поиск/);
+  assert.match(resolveArticleRef('0', ['a']).error, /от 1 до 1/);
+  assert.match(resolveArticleRef('5', ['a', 'b']).error, /от 1 до 2/);
 });

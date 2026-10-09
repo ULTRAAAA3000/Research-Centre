@@ -86,3 +86,18 @@ test('REPL: clear не сбрасывает буфер лога', async () => {
   assert.match(log, /ВВОД\s*: clear/);
   assert.match(log, /ВВОД\s*: status/);
 });
+
+test('REPL: -i <номер> открывает статью из последнего списка, id по-прежнему работает', async () => {
+  calls.length = 0;
+  const { shown } = await session(['-i 1', 'docker', '-i 1', '-i wire', '-t devops', '-i 1', '-i 9', 'exit']);
+  assert.deepEqual(calls, ['search:docker', 'article:demo', 'article:wire', 'topic:devops', 'article:demo']);
+  assert.match(shown, /сначала выполните поиск/);
+  assert.match(shown, /Нет статьи с номером 9: в списке статей от 1 до 1/);
+});
+
+test('REPL: баннер показывает расширенный список команд', async () => {
+  const { shown } = await session(['exit']);
+  for (const word of ['-s <запрос>', '-c', '-t <раздел>', '-i <номер | id>', 'status', 'clear', 'exit, quit']) {
+    assert.ok(shown.includes(word), `в баннере есть ${word}`);
+  }
+});

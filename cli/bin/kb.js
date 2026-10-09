@@ -16,7 +16,7 @@ if (first === '--version' || first === '-v') {
   kb start    то же самое
   kb --help   эта справка
 
-Внутри консоли: help, -s <запрос>, -c, -t <раздел>, -i <id>, status, clear, exit`);
+Внутри консоли: help, -s <запрос>, -c, -t <раздел>, -i <номер|id>, status, clear, exit`);
 } else {
   (async () => {
     await startRepl();

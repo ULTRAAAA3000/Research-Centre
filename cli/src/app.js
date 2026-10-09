@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import * as defaultApi from './api.js';
 import * as fmt from './formatter.js';
 import { SessionLogger } from './logger.js';
+import { theme } from './theme.js';
 import { PROMPT_TEXT, API_BASE_URL } from './config.js';
 
 // ───────────────────────── Разбор строки ─────────────────────────
@@ -92,11 +93,31 @@ export function parseInput(line) {
   return result;
 }
 
+// ───────────────────────── Номера статей ─────────────────────────
+
+/**
+ * Значение флага -i: номер статьи из последнего списка (поиск или раздел) либо обычный id.
+ * Число считается номером, всё остальное передаётся как id без изменений.
+ * Возвращает { id } или { error } с понятным сообщением.
+ */
+export function resolveArticleRef(value, list = []) {
+  const ref = String(value).trim();
+  if (!/^\d+$/.test(ref)) return { id: ref };
+  if (!list.length) return { error: `Номер ${ref} пока не к чему привязать: сначала выполните поиск (-s) или откройте раздел (-t)` };
+  const n = Number(ref);
+  if (n < 1 || n > list.length) return { error: `Нет статьи с номером ${ref}: в списке статей от 1 до ${list.length}` };
+  return { id: list[n - 1] };
+}
+
 // ───────────────────────── Выполнение команд ─────────────────────────
 
-async function execute(parsed, api) {
+/**
+ * ctx.list хранит id статей последнего показанного списка (поиск или раздел):
+ * номер в списке и есть номер статьи для -i. Список обновляется только при успешном показе нового списка.
+ */
+async function execute(parsed, api, ctx = { list: [] }) {
   if (parsed.errors.length) {
-    return [...parsed.errors.map(fmt.formatError), chalk.gray('Справка: help')].join('\n');
+    return [...parsed.errors.map(fmt.formatError), theme.muted('Справка: help')].join('\n');
   }
   let text;
   if (parsed.help) {
@@ -104,20 +125,27 @@ async function execute(parsed, api) {
   } else if (parsed.categories) {
     text = fmt.formatCategories(await api.categories());
   } else if (parsed.id) {
-    text = fmt.formatArticle((await api.article(parsed.id)).article);
+    const ref = resolveArticleRef(parsed.id, ctx.list);
+    if (ref.error) return fmt.formatError(ref.error);
+    text = fmt.formatArticle((await api.article(ref.id)).article);
   } else if (parsed.topic && parsed.search) {
     const [topic, found] = await Promise.all([api.topic(parsed.topic), api.search(parsed.search)]);
     const results = (found.results || []).filter((r) => r.category === topic.category.key);
     text = fmt.formatSearch({ ...found, results, count: results.length }, { topic: topic.category });
+    ctx.list = results.map((r) => r.id);
   } else if (parsed.topic) {
-    text = fmt.formatTopic(await api.topic(parsed.topic));
+    const data = await api.topic(parsed.topic);
+    text = fmt.formatTopic(data);
+    ctx.list = (data.articles || []).map((a) => a.id);
   } else if (parsed.search) {
-    text = fmt.formatSearch(await api.search(parsed.search));
+    const data = await api.search(parsed.search);
+    text = fmt.formatSearch(data);
+    ctx.list = (data.results || []).map((r) => r.id);
   } else {
-    text = chalk.yellow('Введите запрос или команду. Справка: help');
+    text = theme.yellow('Введите запрос или команду. Справка: help');
   }
   if (parsed.extra.length) {
-    text += `\n${chalk.gray(`Лишние слова проигнорированы: ${parsed.extra.join(' ')}`)}`;
+    text += `\n${theme.muted(`Лишние слова проигнорированы: ${parsed.extra.join(' ')}`)}`;
   }
   return text;
 }
@@ -141,7 +169,7 @@ export function startRepl({
   const rl = readline.createInterface({
     input,
     output,
-    prompt: chalk.bold.cyan(PROMPT_TEXT),
+    prompt: chalk.bold.cyanBright(PROMPT_TEXT),
     terminal: interactive,
     historySize: 200,
   });
@@ -153,6 +181,7 @@ export function startRepl({
 
   let closing = false;
   let queue = Promise.resolve();
+  const ctx = { list: [] }; // id статей последнего списка: по ним работает -i <номер>
 
   return new Promise((resolve) => {
     const onSignal = (name) => () => finish(name);
@@ -171,9 +200,9 @@ export function startRepl({
       let saved = null;
       try {
         saved = logger.save();
-        output.write(`\n${chalk.green('[✓]')} Сессия завершена. Лог сохранен в ${saved.display}\n`);
+        output.write(`\n${theme.green('[✓]')} Сессия завершена. Лог сохранен в ${saved.display}\n`);
       } catch (err) {
-        output.write(`\n${chalk.red('[✖]')} Сессия завершена, но лог сохранить не удалось: ${err.message}\n`);
+        output.write(`\n${theme.red('[✖]')} Сессия завершена, но лог сохранить не удалось: ${err.message}\n`);
       }
       resolve({ reason, logPath: saved?.path ?? null });
     }
@@ -200,7 +229,7 @@ export function startRepl({
       }
 
       try {
-        print(await execute(parseInput(line), api));
+        print(await execute(parseInput(line), api, ctx));
       } catch (err) {
         print(fmt.formatApiError(err));
       }
