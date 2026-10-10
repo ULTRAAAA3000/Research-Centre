@@ -31,13 +31,15 @@ const TG_LIMIT = 3800;
 const PAGE_SIZE = 8;
 
 // Разделы базы знаний: ключ = значение category во frontmatter статьи
-const CATEGORIES: Record<string, { title: string; emoji: string }> = {
-  networking: { title: "Сети и прокси", emoji: "🌐" },
-  security: { title: "Безопасность", emoji: "🛡️" },
-  databases: { title: "Базы данных", emoji: "🗄️" },
-  devops: { title: "DevOps и CI/CD", emoji: "🚀" },
-  linux: { title: "Linux и системы", emoji: "🐧" },
-  ubuntu_commands: { title: "Команды Linux / Ubuntu", emoji: "💻" },
+const CATEGORIES: Record<string, { title: string; emoji: string; desc?: string }> = {
+  networking: { title: "Сети и прокси", emoji: "🌐", desc: "VPN, прокси, балансировщики, DNS и маршрутизация" },
+  security: { title: "Безопасность", emoji: "🛡️", desc: "SSH, файрволы, WAF, секреты, сертификаты и доступ" },
+  databases: { title: "Базы данных", emoji: "🗄️", desc: "PostgreSQL, Redis, MongoDB, ClickHouse" },
+  devops: { title: "DevOps и CI/CD", emoji: "🚀", desc: "Контейнеры, Kubernetes, CI/CD, мониторинг, IaC" },
+  linux: { title: "Linux и системы", emoji: "🐧", desc: "Администрирование: systemd, диски, ядро, диагностика" },
+  ubuntu_commands: { title: "Команды Linux / Ubuntu", emoji: "💻", desc: "Шпаргалки по консольным командам Ubuntu" },
+  cloudflare_guides: { title: "Cloudflare: руководства", emoji: "☁️", desc: "Пошагово: Pages с GitHub, Workers и Wrangler, DNS, SSL и защита" },
+  git_github_guide: { title: "Git и GitHub", emoji: "🌿", desc: "Шпаргалка: статус, коммиты, ветки, синхронизация и аварийные команды" },
 };
 const catInfo = (c: string) => CATEGORIES[c] ?? { title: c, emoji: "📁" };
 
@@ -411,7 +413,7 @@ async function handleApi(url: URL, env: Env): Promise<Response> {
   try {
     const items = await loadArticles(env);
     const categories = () => [...new Set(items.map((a) => a.category))].map((c) => ({
-      key: c, title: catInfo(c).title, emoji: catInfo(c).emoji, count: items.filter((a) => a.category === c).length,
+      key: c, title: catInfo(c).title, emoji: catInfo(c).emoji, description: catInfo(c).desc ?? "", count: items.filter((a) => a.category === c).length,
     }));
     const q = (url.searchParams.get("q") || "").trim();
 
@@ -431,7 +433,7 @@ async function handleApi(url: URL, env: Env): Promise<Response> {
         const key = findCategory(items, name);
         if (!key) return json({ error: `Раздел «${name}» не найден`, categories: categories() }, 404);
         const list = items.filter((a) => a.category === key);
-        return json({ category: { key, title: catInfo(key).title, emoji: catInfo(key).emoji, count: list.length }, articles: list.map(briefOf) });
+        return json({ category: { key, title: catInfo(key).title, emoji: catInfo(key).emoji, description: catInfo(key).desc ?? "", count: list.length }, articles: list.map(briefOf) });
       }
       case "/api/article": {
         const id = (url.searchParams.get("id") || "").trim().toLowerCase();
@@ -790,7 +792,7 @@ async function showCategoryPage(env: Env, cb: any | null, chatId: number, cat: s
   const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   const pg = Math.min(Math.max(0, Number.isFinite(page) ? page : 0), pages - 1);
   const slice = list.slice(pg * PAGE_SIZE, pg * PAGE_SIZE + PAGE_SIZE);
-  const info = cat === "*" ? { emoji: "📖", title: "Все статьи A-Z" } : catInfo(cat);
+  const info: { emoji: string; title: string; desc?: string } = cat === "*" ? { emoji: "📖", title: "Все статьи A-Z" } : catInfo(cat);
 
   const kb: Kb = slice.map((a) => [{ text: `📌 ${a.title}`.slice(0, 60), callback_data: `a:${a.id}` }]);
   if (pages > 1) {
@@ -801,7 +803,7 @@ async function showCategoryPage(env: Env, cb: any | null, chatId: number, cat: s
     ]);
   }
   kb.push([{ text: "⬅️ Разделы", callback_data: "all" }, { text: "🏠 Меню", callback_data: "menu" }]);
-  const head = `${BRAND}\n${info.emoji} <b>${esc(info.title)}</b> · статей: ${list.length}` + (pages > 1 ? ` · страница ${pg + 1} из ${pages}` : "");
+  const head = `${BRAND}\n${info.emoji} <b>${esc(info.title)}</b> · статей: ${list.length}` + (pages > 1 ? ` · страница ${pg + 1} из ${pages}` : "") + (info.desc ? `\n<i>${esc(info.desc)}</i>` : "");
   await show(env, cb, chatId, list.length ? head : `${head}\n\nВ этом разделе пока нет статей.`, kb);
 }
 
@@ -856,7 +858,7 @@ async function sendHelp(env: Env, chatId: number) {
     "",
     "🔎 <b>Поиск.</b> Отправьте слово или фразу: <code>docker</code>, <code>wireguard</code>, <code>ssh туннель</code>. Поиск идёт по названию, id, тегам и тексту статей. Команда <code>/search &lt;запрос&gt;</code> делает то же самое.",
     "",
-    "📚 <b>Разделы.</b> Команда /all открывает разделы: сети, безопасность, базы данных, DevOps, Linux и команды Linux / Ubuntu (шпаргалки по sudo, сети, пакетам, UFW и другому). Внутри раздела статьи листаются кнопками ◀️ ▶️, а «Все статьи A-Z» показывает всю базу.",
+    "📚 <b>Разделы.</b> Команда /all открывает разделы: сети, безопасность, базы данных, DevOps, Linux, команды Linux / Ubuntu, руководства по Cloudflare и шпаргалка по Git и GitHub. Внутри раздела статьи листаются кнопками ◀️ ▶️, а «Все статьи A-Z» показывает всю базу.",
     "",
     "📄 <b>Кнопки под статьёй:</b>",
     "• ⚡ <b>Только команды</b>: только блоки кода с заголовками разделов, без пояснений. Быстрая шпаргалка.",

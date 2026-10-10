@@ -234,6 +234,7 @@ export function formatCategories(data) {
   const keyWidth = Math.max(...list.map((c) => c.key.length), 8);
   for (const c of list) {
     lines.push(`  ${c.emoji} ${theme.cyan(c.key.padEnd(keyWidth))} ${c.title} ${theme.muted(`(${c.count})`)}`);
+    if (c.description) lines.push(`     ${theme.muted(c.description)}`);
   }
   lines.push('', theme.muted('Статьи раздела: -t <раздел>, например -t security'));
   return lines.join('\n');
@@ -241,7 +242,9 @@ export function formatCategories(data) {
 
 export function formatTopic(data) {
   const { category, articles = [] } = data;
-  const lines = [chalk.bold(`${category.emoji} ${category.title}`) + theme.muted(` (${category.key}, статей: ${category.count})`), ''];
+  const lines = [chalk.bold(`${category.emoji} ${category.title}`) + theme.muted(` (${category.key}, статей: ${category.count})`)];
+  if (category.description) lines.push(theme.muted(category.description));
+  lines.push('');
   articles.forEach((a, i) => {
     lines.push(`${theme.muted(String(i + 1).padStart(2) + '.')} ${chalk.bold.yellowBright(a.title)}`);
     lines.push(`    ${theme.cyan('id:')} ${a.id}`);
